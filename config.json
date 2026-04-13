@@ -1,0 +1,95 @@
+{
+  "name": "web-publisher",
+  "version": "0.1.0",
+  "requiredEnvVars": [
+    "WEB_PUBLISHER_API_URL",
+    "WEB_PUBLISHER_USER_ID",
+    "WEB_PUBLISHER_API_KEY"
+  ],
+  "requires": {
+    "runtime": {
+      "node": ">=18.0.0"
+    },
+    "binaries": [],
+    "packages": {}
+  },
+  "skill": {
+    "name": "web-publisher",
+    "version": "0.1.0",
+    "enabled": true,
+    "autoInvoke": false
+  },
+  "commands": {
+    "publish": {
+      "script": "./scripts/run.js",
+      "args": ["publish"],
+      "description": "将网页文章提取并发布到平台（默认创建草稿）"
+    },
+    "draft": {
+      "script": "./scripts/run.js",
+      "args": ["draft"],
+      "description": "将网页文章提取并创建草稿"
+    },
+    "status": {
+      "script": "./scripts/run.js",
+      "args": ["status"],
+      "description": "查询任务状态"
+    },
+    "help": {
+      "script": "./scripts/run.js",
+      "args": ["help"],
+      "description": "显示使用帮助"
+    }
+  },
+  "environment": {
+    "required": [
+      "WEB_PUBLISHER_API_URL",
+      "WEB_PUBLISHER_USER_ID",
+      "WEB_PUBLISHER_API_KEY"
+    ],
+    "optional": []
+  },
+  "install": {
+    "type": "config-only",
+    "autoInstall": true,
+    "riskLevel": "low",
+    "riskReason": "此 Skill 仅通过 HTTP API 调用远程服务，不安装任何第三方包，不执行本地命令。",
+    "requiresApproval": false
+  },
+  "dependencies": {
+    "npm": [],
+    "binaries": [],
+    "note": "No local dependencies. This skill calls a remote API."
+  },
+  "permissions": {
+    "filesystem": {
+      "read": [],
+      "write": []
+    },
+    "network": {
+      "domains": [
+        "47.103.70.193:4000",
+        "api.siping.me"
+      ],
+      "note": "调用 PingAI API 进行文章提取和发布"
+    }
+  },
+  "capabilities": {
+    "sensitive": [
+      {
+        "type": "api-credential-usage",
+        "riskLevel": "medium",
+        "description": "使用用户的 API Key 调用远程发布服务",
+        "risks": [
+          "API Key 泄露可能导致未授权发布",
+          "发布操作不可撤回（publish 模式）"
+        ],
+        "mitigations": [
+          "默认使用 draft 模式，不自动发布",
+          "API Key 通过环境变量传递，不硬编码",
+          "所有操作可在 tools.siping.me 审计"
+        ]
+      }
+    ]
+  }
+}
