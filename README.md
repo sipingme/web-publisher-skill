@@ -17,30 +17,17 @@
 
 ### 2. 微信公众号 IP 白名单
 
-在微信公众平台 → 设置与开发 → 基本配置 → IP白名单 中，添加服务器 IP：
+在微信公众平台 → 设置与开发 → 基本配置 → IP白名单 中，添加服务器 IP（在 [tools.siping.me](https://tools.siping.me) 中查看）。
 
-```
-47.103.70.193
-```
+### 3. 配置环境变量
 
-### 3. 配置 OpenClaw
+在 ClawHub 的 Skill 设置中配置以下环境变量：
 
-将以下内容添加到 OpenClaw 的系统提示词或 Skill 配置中：
-
-```
-你可以使用 web-publisher skill 将网页文章发布到微信公众号。
-
-API 地址: http://47.103.70.193:4000
-用户 ID: <替换为你的用户 ID>
-API Key: <替换为你的 API Key>
-
-使用方式:
-- 创建草稿: scripts/run.js draft <url>
-- 直接发布: scripts/run.js publish <url>
-- 可选参数: --theme blackink, --rewrite, --style casual
-
-默认创建草稿，不会自动发布。用户明确要求发布时才使用 publish 命令。
-```
+| 变量 | 说明 |
+|------|------|
+| `WEB_PUBLISHER_API_URL` | API 服务地址（在 tools.siping.me 中查看） |
+| `WEB_PUBLISHER_USER_ID` | 用户 ID |
+| `WEB_PUBLISHER_API_KEY` | API Key |
 
 ## 使用示例
 

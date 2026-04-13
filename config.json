@@ -1,6 +1,6 @@
 {
   "name": "web-publisher",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "requiredEnvVars": [
     "WEB_PUBLISHER_API_URL",
     "WEB_PUBLISHER_USER_ID",
@@ -15,7 +15,7 @@
   },
   "skill": {
     "name": "web-publisher",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "enabled": true,
     "autoInvoke": false
   },
@@ -68,10 +68,9 @@
     },
     "network": {
       "domains": [
-        "47.103.70.193:4000",
-        "api.siping.me"
+        "用户配置的 API 地址"
       ],
-      "note": "调用 PingAI API 进行文章提取和发布"
+      "note": "调用用户自行部署的 Web Publisher API 进行文章提取和发布"
     }
   },
   "capabilities": {

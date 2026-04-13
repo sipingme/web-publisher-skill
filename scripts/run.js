@@ -153,7 +153,7 @@ async function runStatus() {
 
 function showHelp() {
   console.log(`
-web-publisher-skill v0.1.0
+web-publisher-skill v0.1.1
 将网页文章提取并发布到平台
 
 用法:
