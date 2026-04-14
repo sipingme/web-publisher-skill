@@ -72,15 +72,8 @@ async function pollJob(jobId) {
   for (let i = 0; i < MAX_POLL_ATTEMPTS; i++) {
     await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
     const job = await apiRequest('GET', `/jobs/${jobId}`);
-
-    if (job.status === 'completed') {
-      return job;
-    }
-    if (job.status === 'failed') {
-      throw new Error(job.error || 'Job failed');
-    }
-
-    // Show progress
+    if (job.status === 'completed') return job;
+    if (job.status === 'failed') throw new Error(job.error || 'Job failed');
     const progress = job.progress || 0;
     const step = job.currentStep || '';
     process.stderr.write(`\r[${progress}%] ${step}...`);
@@ -111,10 +104,9 @@ async function runPublish(action) {
   }
 
   try {
-    process.stderr.write(`[0%] Starting pipeline...\n`);
+    process.stderr.write(`[0%] 提交任务...\n`);
     const response = await apiRequest('POST', '/pipeline', body);
-
-    process.stderr.write(`Job created: ${response.jobId}\n`);
+    process.stderr.write(`任务已创建: ${response.jobId}\n`);
     const result = await pollJob(response.jobId);
     process.stderr.write('\n');
 
@@ -153,34 +145,32 @@ async function runStatus() {
 
 function showHelp() {
   console.log(`
-web-publisher-skill v0.1.1
-将网页文章提取并发布到平台
+web-publisher-skill v0.2.0 — 将网页文章发布到微信公众号
 
 用法:
   scripts/run.js <command> <url> [选项]
 
 命令:
-  publish <url>     提取文章并发布
-  draft <url>       提取文章并创建草稿（默认）
-  status <jobId>    查询任务状态
-  help              显示帮助信息
+  draft   <url>     保存为草稿
+  publish <url>     直接发布
+  status  <jobId>   查询任务状态
 
 选项:
-  --theme <name>    发布主题（默认: blackink）
+  --theme <name>    主题（默认: blackink）
   --rewrite         启用 AI 改写
-  --style <style>   改写风格: casual, formal, technical, creative, custom
+  --style <style>   改写风格: casual / formal / technical / creative
   --prompt <text>   自定义改写提示
 
 示例:
-  scripts/run.js draft https://mp.weixin.qq.com/s/xxxxx
-  scripts/run.js publish https://example.com/article --theme blackink
+  scripts/run.js draft https://m.toutiao.com/is/xxx/
+  scripts/run.js publish https://mp.weixin.qq.com/s/xxx --theme blackink
   scripts/run.js draft https://example.com/article --rewrite --style casual
   scripts/run.js status job_abc123
 
-环境变量:
-  WEB_PUBLISHER_API_URL     API 服务地址
-  WEB_PUBLISHER_USER_ID     用户 ID
-  WEB_PUBLISHER_API_KEY     API Key
+环境变量（在 tools.siping.me 个人资料页获取）:
+  WEB_PUBLISHER_API_URL   API 服务地址
+  WEB_PUBLISHER_USER_ID   用户 ID
+  WEB_PUBLISHER_API_KEY   API Key
 `);
 }
 
