@@ -4,6 +4,10 @@ version: 0.2.1
 description: 将网页文章提取并发布到平台（微信公众号等）
 author: Ping Si <sipingme@gmail.com>
 tags: [publish, wechat, article, content]
+requiredEnvVars:
+  - WEB_PUBLISHER_API_URL
+  - WEB_PUBLISHER_USER_ID
+  - WEB_PUBLISHER_API_KEY
 ---
 
 # Web Publisher

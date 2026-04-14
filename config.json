@@ -68,9 +68,9 @@
     },
     "network": {
       "domains": [
-        "用户配置的 API 地址"
+        "<WEB_PUBLISHER_API_URL>"
       ],
-      "note": "调用用户自行部署的 Web Publisher API 进行文章提取和发布"
+      "note": "Calls the user-configured remote Web Publisher API for article extraction and publishing"
     }
   },
   "capabilities": {
