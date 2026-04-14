@@ -1,6 +1,6 @@
 {
   "name": "web-publisher",
-  "version": "0.1.1",
+  "version": "0.2.1",
   "requiredEnvVars": [
     "WEB_PUBLISHER_API_URL",
     "WEB_PUBLISHER_USER_ID",
@@ -15,7 +15,7 @@
   },
   "skill": {
     "name": "web-publisher",
-    "version": "0.1.1",
+    "version": "0.2.1",
     "enabled": true,
     "autoInvoke": false
   },
