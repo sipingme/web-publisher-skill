@@ -1,6 +1,6 @@
 ---
 name: web-publisher
-version: 0.2.7
+version: 0.2.8
 description: 本地提取网页文章内容，发布到微信公众号（支持知乎、头条、36kr、CSDN 等）
 author: Ping Si <sipingme@gmail.com>
 tags: [publish, wechat, article, content]
@@ -133,9 +133,24 @@ URL → 本地 news-to-markdown（提取 Markdown）
     → wechat-md-publisher（上传图片+发布）
 ```
 
-## 安全说明
+## 安全与信任说明
 
-- 内容提取在本地完成（`news-to-markdown`），服务器不接触原始网页，只处理 Markdown 改写和发布
-- API Key 通过环境变量传递，不硬编码
-- 默认使用 draft 模式，不会自动发布
-- 所有操作可在 tools.siping.me 审计
+### 数据流
+
+1. **本地**：`news-to-markdown` 从目标网页提取 Markdown 文本
+2. **发送到服务器**：原始 URL + 提取的 Markdown 内容 + 你的 API Key
+3. **服务器端**：从 Markdown 中的图片 URL 下载图片（会访问原始网页的图床），上传到微信，最终调用微信 API 创建草稿或发布
+
+> ⚠️ 服务器会收到原始 URL 和全文内容，并在发布时从原图片地址下载图片。
+
+### API 凭证与授权
+
+- `WEB_PUBLISHER_API_KEY` 允许远程服务以你的身份向微信公众号发布内容——这是高权限操作
+- IP 白名单（第 2 步）授权远程服务器 IP 直接调用微信 API，请确认你信任该 IP 归属方
+- 服务提供方为 [tools.siping.me](https://tools.siping.me)，源码可在 [github.com/sipingme/web-publisher-skill](https://github.com/sipingme/web-publisher-skill) 查看
+
+### 其他
+
+- API Key 通过环境变量传递，不硬编码在代码中
+- 默认使用 `draft` 模式，不会自动发布；`publish` 模式需用户明确指定
+- 所有操作记录可在 tools.siping.me 个人页面查看
