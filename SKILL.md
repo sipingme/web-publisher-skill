@@ -1,7 +1,7 @@
 ---
 name: web-publisher
 version: 0.2.4
-description: 将网页文章提取并发布到平台（微信公众号等）
+description: 本地提取网页文章内容，发布到微信公众号（支持知乎、头条、36kr、CSDN 等）
 author: Ping Si <sipingme@gmail.com>
 tags: [publish, wechat, article, content]
 requiredEnvVars:
@@ -49,61 +49,57 @@ npm install -g news-to-markdown
 
 ## 给 AI 的使用说明
 
-当用户要求将网页文章发布到微信公众号时，使用以下命令：
+当用户要求将网页文章发布或保存到微信公众号时，使用以下命令：
 
 - 创建草稿: `scripts/run.js draft <url>`
 - 直接发布: `scripts/run.js publish <url>`
 - 可选参数: `--theme blackink`, `--rewrite`, `--style casual`
 
-默认创建草稿，不会自动发布。用户明确要求发布时才使用 publish 命令。
+**注意**：
+- 默认创建草稿，不会自动发布。用户明确说「发布」时才使用 publish 命令。
+- 本地提取内容可能需要 30-60 秒，属正常现象。
+- 若提取失败提示未安装 news-to-markdown，请提醒用户运行 `npm install -g news-to-markdown`。
 
 ## 使用示例
 
 以下是在 OpenClaw 中与 AI 对话使用本 Skill 的示例：
 
-### 示例 1：创建草稿
+### 示例 1：知乎/头条文章存为草稿
 
-> 用户：帮我把这篇文章存到公众号草稿 https://mp.weixin.qq.com/s/xxxxx
+> 用户：把这篇知乎文章存到公众号草稿 https://zhuanlan.zhihu.com/p/xxx
 
-AI 执行：
+```bash
+scripts/run.js draft https://zhuanlan.zhihu.com/p/xxx
+```
+
+### 示例 2：微信文章存草稿
+
+> 用户：帮我把这篇微信文章存到公众号草稿 https://mp.weixin.qq.com/s/xxxxx
+
 ```bash
 scripts/run.js draft https://mp.weixin.qq.com/s/xxxxx
 ```
 
-输出：
-```json
-{
-  "success": true,
-  "action": "draft",
-  "title": "文章标题",
-  "mediaId": "media_id_xxx",
-  "theme": "blackink"
-}
-```
+### 示例 3：改写后存草稿
 
-### 示例 2：改写后创建草稿
+> 用户：把这篇文章改写成轻松的风格，存到草稿 https://36kr.com/p/xxx
 
-> 用户：把这篇文章改写成轻松的风格，存到草稿 https://example.com/article
-
-AI 执行：
 ```bash
-scripts/run.js draft https://example.com/article --rewrite --style casual
+scripts/run.js draft https://36kr.com/p/xxx --rewrite --style casual
 ```
 
-### 示例 3：直接发布
+### 示例 4：直接发布
 
 > 用户：把这篇文章直接发布到公众号 https://example.com/article
 
-AI 执行：
 ```bash
 scripts/run.js publish https://example.com/article
 ```
 
-### 示例 4：查询任务状态
+### 示例 5：查询任务状态
 
 > 用户：上次那个发布任务完成了吗？
 
-AI 执行：
 ```bash
 scripts/run.js status job_abc123
 ```
@@ -119,30 +115,27 @@ scripts/run.js status job_abc123
 
 ## 支持平台
 
-| 平台 | 提取 | 发布 | 状态 |
+| 平台 | 提取 | 发布 | 备注 |
 |------|------|------|------|
-| 微信公众号 | ✅ | ✅ | 已支持 |
-| 知乎专栏 | ✅（本地） | - | 已支持 |
-| 今日头条 | ✅ | - | 计划中 |
-| 小红书 | ✅ | - | 计划中 |
+| 微信公众号 | ✅ | ✅ | |
+| 今日头条 | ✅ | - | |
+| 知乎 | ✅ | - | |
+| 36kr | ✅ | - | |
+| 人人都是产品经理 | ✅ | - | |
+| CSDN | ✅ | - | |
+| 小红书 | ✅ | - | 部分内容需登录 |
 
 ## 工作原理
 
 ```
-普通网站:
-URL → 服务器 news-to-markdown（提取+下载图片）
-    → markdown-ai-rewriter（可选，AI 改写）
-    → wechat-md-publisher（上传图片+发布）
-
-知乎等被封锁站点（需本地安装 news-to-markdown）:
-URL → 本地 news-to-markdown（Chrome Playwright 提取）
-    → 服务器 markdown-ai-rewriter（可选）
+URL → 本地 news-to-markdown（提取 Markdown）
+    → 服务器 markdown-ai-rewriter（可选，AI 改写）
     → wechat-md-publisher（上传图片+发布）
 ```
 
 ## 安全说明
 
-- 默认不安装本地包，仅通过 HTTP API 调用远程服务；可选安装 `news-to-markdown` 用于本地提取被封锁站点
+- 内容提取在本地完成（`news-to-markdown`），服务器不接触原始网页，只处理 Markdown 改写和发布
 - API Key 通过环境变量传递，不硬编码
 - 默认使用 draft 模式，不会自动发布
 - 所有操作可在 tools.siping.me 审计
