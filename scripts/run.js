@@ -28,7 +28,7 @@ async function extractMarkdownLocally(url) {
     (async () => {
       const { NewsToMarkdownConverter } = require('news-to-markdown');
       const conv = new NewsToMarkdownConverter();
-      const r = await conv.convert({ url: process.argv[2], timeout: 60000, includeMetadata: true });
+      const r = await conv.convert({ url: process.argv[1], timeout: 60000, includeMetadata: true });
       process.stdout.write(r.markdown);
     })().catch(e => { process.stderr.write(e.message + '\\n'); process.exit(1); });
   `;
@@ -202,7 +202,7 @@ async function runStatus() {
 
 function showHelp() {
   console.log(`
-web-publisher-skill v0.3.0 — 将网页文章发布到微信公众号
+web-publisher-skill v0.3.1 — 将网页文章发布到微信公众号
 
 用法:
   scripts/run.js <command> <url> [选项]
