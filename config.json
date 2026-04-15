@@ -1,6 +1,6 @@
 {
   "name": "web-publisher",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "requiredEnvVars": [
     "WEB_PUBLISHER_API_URL",
     "WEB_PUBLISHER_USER_ID",
@@ -15,7 +15,7 @@
   },
   "skill": {
     "name": "web-publisher",
-    "version": "0.2.3",
+    "version": "0.2.4",
     "enabled": true,
     "autoInvoke": false
   },
@@ -53,13 +53,13 @@
     "type": "config-only",
     "autoInstall": true,
     "riskLevel": "low",
-    "riskReason": "此 Skill 仅通过 HTTP API 调用远程服务。news-to-markdown 需手动安装（用于本地提取被封锁站点内容）。",
+    "riskReason": "此 Skill 仅通过 HTTP API 调用远程服务，不安装任何第三方包，不执行本地命令。",
     "requiresApproval": false
   },
   "dependencies": {
-    "npm": ["news-to-markdown@^3.1.9"],
+    "npm": [],
     "binaries": [],
-    "note": "news-to-markdown is used for local extraction of sites blocked on the server (e.g. Zhihu)."
+    "note": "Optional: npm install -g news-to-markdown for local extraction of Zhihu articles blocked on server."
   },
   "permissions": {
     "filesystem": {

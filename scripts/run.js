@@ -21,12 +21,9 @@ function isZhihuUrl(url) {
 async function extractMarkdownLocally(url) {
   const { spawnSync } = require('child_process');
 
-  // 查找 news-to-markdown 模块（优先 skill 自带的 node_modules）
-  const path = require('path');
-  const scriptDir = path.dirname(__filename);
+  // 查找全局安装的 news-to-markdown（npm install -g news-to-markdown）
   const candidates = [
-    path.join(scriptDir, '../node_modules/news-to-markdown'),      // skill 依赖（首选）
-    'news-to-markdown',                                            // 全局安装的 fallback
+    'news-to-markdown',
   ];
 
   const script = `
@@ -229,7 +226,7 @@ async function runStatus() {
 
 function showHelp() {
   console.log(`
-web-publisher-skill v0.2.3 — 将网页文章发布到微信公众号
+web-publisher-skill v0.2.4 — 将网页文章发布到微信公众号
 
 用法:
   scripts/run.js <command> <url> [选项]

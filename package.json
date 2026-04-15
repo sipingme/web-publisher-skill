@@ -1,9 +1,0 @@
-{
-  "name": "web-publisher-skill",
-  "version": "0.2.3",
-  "description": "将网页文章提取并发布到微信公众号",
-  "private": true,
-  "dependencies": {
-    "news-to-markdown": "^3.1.9"
-  }
-}

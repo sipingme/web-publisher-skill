@@ -1,6 +1,6 @@
 ---
 name: web-publisher
-version: 0.2.3
+version: 0.2.4
 description: 将网页文章提取并发布到平台（微信公众号等）
 author: Ping Si <sipingme@gmail.com>
 tags: [publish, wechat, article, content]
@@ -31,15 +31,13 @@ requiredEnvVars:
 
 在微信公众平台 → 设置与开发 → 基本配置 → IP白名单 中，添加服务器 IP（在 [tools.siping.me](https://tools.siping.me) 中查看）。
 
-### 3. 安装本地依赖（可选，用于知乎等被服务器封锁的站点）
-
-在 Skill 目录下运行：
+### 3. 安装本地依赖
 
 ```bash
-npm install
+npm install -g news-to-markdown
 ```
 
-这将安装 `news-to-markdown`，用于在本地提取知乎等网站内容后再发送给服务器。不安装时，知乎文章将由服务器直接抓取（可能因 IP 封锁失败）。
+安装后，知乎文章将在本地提取后再发送给服务器，可绕过服务器 IP 封锁。不安装时，知乎文章由服务器直接抓取（可能失败）。
 
 ### 4. 配置环境变量
 
