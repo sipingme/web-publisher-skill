@@ -37,8 +37,6 @@ requiredEnvVars:
 npm install -g news-to-markdown
 ```
 
-安装后，知乎文章将在本地提取后再发送给服务器，可绕过服务器 IP 封锁。不安装时，知乎文章由服务器直接抓取（可能失败）。
-
 ### 4. 配置环境变量
 
 在 ClawHub 的 Skill 设置中配置以下环境变量：
@@ -124,20 +122,27 @@ scripts/run.js status job_abc123
 | 平台 | 提取 | 发布 | 状态 |
 |------|------|------|------|
 | 微信公众号 | ✅ | ✅ | 已支持 |
+| 知乎专栏 | ✅（本地） | - | 已支持 |
 | 今日头条 | ✅ | - | 计划中 |
 | 小红书 | ✅ | - | 计划中 |
 
 ## 工作原理
 
 ```
-URL → news-to-markdown（提取+下载图片）
+普通网站:
+URL → 服务器 news-to-markdown（提取+下载图片）
     → markdown-ai-rewriter（可选，AI 改写）
+    → wechat-md-publisher（上传图片+发布）
+
+知乎等被封锁站点（需本地安装 news-to-markdown）:
+URL → 本地 news-to-markdown（Chrome Playwright 提取）
+    → 服务器 markdown-ai-rewriter（可选）
     → wechat-md-publisher（上传图片+发布）
 ```
 
 ## 安全说明
 
-- 此 Skill 不安装任何本地包，仅通过 HTTP API 调用远程服务
+- 默认不安装本地包，仅通过 HTTP API 调用远程服务；可选安装 `news-to-markdown` 用于本地提取被封锁站点
 - API Key 通过环境变量传递，不硬编码
 - 默认使用 draft 模式，不会自动发布
 - 所有操作可在 tools.siping.me 审计
