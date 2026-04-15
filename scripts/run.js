@@ -193,7 +193,7 @@ async function runStatus() {
 
 function showHelp() {
   console.log(`
-web-publisher-skill v0.3.3 — 将网页文章发布到微信公众号
+web-publisher-skill v0.3.4 — 将网页文章发布到微信公众号
 
 用法:
   scripts/run.js <command> <url> [选项]
