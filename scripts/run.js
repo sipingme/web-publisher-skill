@@ -3,35 +3,24 @@
 const POLL_INTERVAL_MS = 3000;
 const MAX_POLL_ATTEMPTS = 60;
 
-async function extractMarkdownLocally(url) {
-  const { spawnSync } = require('child_process');
-
-  // 获取 npm 全局 node_modules 路径，注入到子进程 NODE_PATH
-  let globalNodeModules = '';
-  try {
-    const r = spawnSync('npm', ['root', '-g'], { encoding: 'utf8', shell: true });
-    if (r.status === 0) globalNodeModules = r.stdout.trim();
-  } catch {}
-
-  const nodePath = [globalNodeModules, process.env.NODE_PATH].filter(Boolean).join(':');
-  const childEnv = { ...process.env, NODE_PATH: nodePath };
-
-  // 验证 news-to-markdown 是否已安装
-  const check = spawnSync(process.execPath, ['-e', "require('news-to-markdown')"], { encoding: 'utf8', env: childEnv });
-  if (check.status !== 0) {
-    throw new Error(
-      'news-to-markdown 未安装。请运行: npm install -g news-to-markdown'
-    );
+function loadNewsToMarkdown() {
+  const path = require('path');
+  // 按优先级依次尝试加载 news-to-markdown
+  const candidates = [
+    'news-to-markdown',
+    path.join(path.dirname(process.execPath), '..', 'lib', 'node_modules', 'news-to-markdown'),
+    '/usr/local/lib/node_modules/news-to-markdown',
+    '/usr/lib/node_modules/news-to-markdown',
+  ];
+  for (const p of candidates) {
+    try { return require(p); } catch {}
   }
+  throw new Error('news-to-markdown 未安装。请运行: npm install -g news-to-markdown');
+}
 
-  const script = `
-    (async () => {
-      const { NewsToMarkdownConverter } = require('news-to-markdown');
-      const conv = new NewsToMarkdownConverter();
-      const r = await conv.convert({ url: process.argv[1], timeout: 60000, includeMetadata: true });
-      process.stdout.write(r.markdown);
-    })().catch(e => { process.stderr.write(e.message + '\\n'); process.exit(1); });
-  `;
+async function extractMarkdownLocally(url) {
+  const { NewsToMarkdownConverter } = loadNewsToMarkdown();
+  const conv = new NewsToMarkdownConverter();
 
   // 显示计时进度（本地提取可能需要 30-60 秒）
   let elapsed = 0;
@@ -40,21 +29,17 @@ async function extractMarkdownLocally(url) {
     process.stderr.write(`\r[local] 正在提取... ${elapsed}s`);
   }, 3000);
 
-  const result = spawnSync(process.execPath, ['-e', script, url], {
-    timeout: 70000,
-    maxBuffer: 10 * 1024 * 1024,
-    encoding: 'utf8',
-    env: childEnv,
-  });
-
-  clearInterval(timer);
-  process.stderr.write('\r');
-
-  if (result.status === 0 && result.stdout && result.stdout.length > 100) {
-    return result.stdout;
+  try {
+    const r = await conv.convert({ url, timeout: 60000, includeMetadata: true });
+    clearInterval(timer);
+    process.stderr.write('\r');
+    if (!r.markdown || r.markdown.length < 100) throw new Error('提取内容为空');
+    return r.markdown;
+  } catch (e) {
+    clearInterval(timer);
+    process.stderr.write('\r');
+    throw new Error('本地提取失败: ' + e.message);
   }
-  const err = result.stderr?.trim() || result.error?.message || 'unknown';
-  throw new Error('本地提取失败: ' + err);
 }
 
 const API_URL = process.env.WEB_PUBLISHER_API_URL;
