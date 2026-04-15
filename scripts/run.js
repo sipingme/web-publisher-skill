@@ -10,6 +10,52 @@ function isWechatUrl(url) {
   }
 }
 
+function isZhihuUrl(url) {
+  try {
+    return new URL(url).hostname.includes('zhihu.com');
+  } catch {
+    return false;
+  }
+}
+
+async function extractMarkdownLocally(url) {
+  const { spawnSync } = require('child_process');
+
+  // 查找 news-to-markdown 模块（优先 skill 自带的 node_modules）
+  const path = require('path');
+  const scriptDir = path.dirname(__filename);
+  const candidates = [
+    path.join(scriptDir, '../node_modules/news-to-markdown'),      // skill 依赖（首选）
+    'news-to-markdown',                                            // 全局安装的 fallback
+  ];
+
+  const script = `
+    (async () => {
+      const candidates = ${JSON.stringify(candidates)};
+      let N2M;
+      for (const c of candidates) {
+        try { N2M = require(c); break; } catch {}
+      }
+      if (!N2M) throw new Error('news-to-markdown not found in: ' + candidates.join(', '));
+      const { NewsToMarkdownConverter } = N2M;
+      const conv = new NewsToMarkdownConverter();
+      const r = await conv.convert({ url: process.argv[2], timeout: 45000, includeMetadata: true });
+      process.stdout.write(r.markdown);
+    })().catch(e => { process.stderr.write(e.message + '\\n'); process.exit(1); });
+  `;
+
+  const result = spawnSync(process.execPath, ['-e', script, url], {
+    timeout: 55000,
+    maxBuffer: 10 * 1024 * 1024,
+    encoding: 'utf8',
+  });
+
+  if (result.status === 0 && result.stdout && result.stdout.length > 100) {
+    return result.stdout;
+  }
+  throw new Error('本地提取失败: ' + (result.stderr || result.error?.message || 'unknown'));
+}
+
 async function fetchHtmlLocally(url) {
   const res = await fetch(url, {
     headers: {
@@ -136,6 +182,10 @@ async function runPublish(action) {
       process.stderr.write('[local] 检测到微信文章，本地提取 HTML...\n');
       body.html = await fetchHtmlLocally(opts.url);
       process.stderr.write('[local] HTML 提取成功，提交任务...\n');
+    } else if (isZhihuUrl(opts.url)) {
+      process.stderr.write('[local] 检测到知乎文章，本地提取 Markdown（绕过服务器 IP 封锁）...\n');
+      body.markdown = await extractMarkdownLocally(opts.url);
+      process.stderr.write('[local] Markdown 提取成功，提交任务...\n');
     }
 
     process.stderr.write(`[0%] 提交任务...\n`);

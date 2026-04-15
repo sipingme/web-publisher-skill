@@ -50,16 +50,16 @@
     "optional": []
   },
   "install": {
-    "type": "config-only",
+    "type": "npm",
     "autoInstall": true,
     "riskLevel": "low",
-    "riskReason": "此 Skill 仅通过 HTTP API 调用远程服务，不安装任何第三方包，不执行本地命令。",
+    "riskReason": "仅安装 news-to-markdown（用于本地提取被服务器封锁的网站内容），通过 HTTP API 调用远程服务。",
     "requiresApproval": false
   },
   "dependencies": {
-    "npm": [],
+    "npm": ["news-to-markdown@^3.1.9"],
     "binaries": [],
-    "note": "No local dependencies. This skill calls a remote API."
+    "note": "news-to-markdown is used for local extraction of sites blocked on the server (e.g. Zhihu)."
   },
   "permissions": {
     "filesystem": {
