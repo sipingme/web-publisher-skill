@@ -31,7 +31,17 @@ requiredEnvVars:
 
 在微信公众平台 → 设置与开发 → 基本配置 → IP白名单 中，添加服务器 IP（在 [tools.siping.me](https://tools.siping.me) 中查看）。
 
-### 3. 配置环境变量
+### 3. 安装本地依赖（可选，用于知乎等被服务器封锁的站点）
+
+在 Skill 目录下运行：
+
+```bash
+npm install
+```
+
+这将安装 `news-to-markdown`，用于在本地提取知乎等网站内容后再发送给服务器。不安装时，知乎文章将由服务器直接抓取（可能因 IP 封锁失败）。
+
+### 4. 配置环境变量
 
 在 ClawHub 的 Skill 设置中配置以下环境变量：
 

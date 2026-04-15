@@ -50,10 +50,10 @@
     "optional": []
   },
   "install": {
-    "type": "npm",
+    "type": "config-only",
     "autoInstall": true,
     "riskLevel": "low",
-    "riskReason": "仅安装 news-to-markdown（用于本地提取被服务器封锁的网站内容），通过 HTTP API 调用远程服务。",
+    "riskReason": "此 Skill 仅通过 HTTP API 调用远程服务。news-to-markdown 需手动安装（用于本地提取被封锁站点内容）。",
     "requiresApproval": false
   },
   "dependencies": {
