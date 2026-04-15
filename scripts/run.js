@@ -6,8 +6,18 @@ const MAX_POLL_ATTEMPTS = 60;
 async function extractMarkdownLocally(url) {
   const { spawnSync } = require('child_process');
 
+  // 获取 npm 全局 node_modules 路径，注入到子进程 NODE_PATH
+  let globalNodeModules = '';
+  try {
+    const r = spawnSync('npm', ['root', '-g'], { encoding: 'utf8', shell: true });
+    if (r.status === 0) globalNodeModules = r.stdout.trim();
+  } catch {}
+
+  const nodePath = [globalNodeModules, process.env.NODE_PATH].filter(Boolean).join(':');
+  const childEnv = { ...process.env, NODE_PATH: nodePath };
+
   // 验证 news-to-markdown 是否已安装
-  const check = spawnSync(process.execPath, ['-e', "require('news-to-markdown')"], { encoding: 'utf8' });
+  const check = spawnSync(process.execPath, ['-e', "require('news-to-markdown')"], { encoding: 'utf8', env: childEnv });
   if (check.status !== 0) {
     throw new Error(
       'news-to-markdown 未安装。请运行: npm install -g news-to-markdown'
@@ -34,6 +44,7 @@ async function extractMarkdownLocally(url) {
     timeout: 70000,
     maxBuffer: 10 * 1024 * 1024,
     encoding: 'utf8',
+    env: childEnv,
   });
 
   clearInterval(timer);
@@ -191,7 +202,7 @@ async function runStatus() {
 
 function showHelp() {
   console.log(`
-web-publisher-skill v0.2.9 — 将网页文章发布到微信公众号
+web-publisher-skill v0.3.0 — 将网页文章发布到微信公众号
 
 用法:
   scripts/run.js <command> <url> [选项]
