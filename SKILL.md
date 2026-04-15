@@ -1,6 +1,6 @@
 ---
 name: web-publisher
-version: 0.2.4
+version: 0.2.5
 description: 本地提取网页文章内容，发布到微信公众号（支持知乎、头条、36kr、CSDN 等）
 author: Ping Si <sipingme@gmail.com>
 tags: [publish, wechat, article, content]
