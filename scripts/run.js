@@ -1,6 +1,34 @@
 #!/usr/bin/env node
 
 const POLL_INTERVAL_MS = 3000;
+
+function isWechatUrl(url) {
+  try {
+    return new URL(url).hostname.includes('mp.weixin.qq.com');
+  } catch {
+    return false;
+  }
+}
+
+async function fetchHtmlLocally(url) {
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'zh-CN,zh;q=0.9',
+      'Referer': 'https://mp.weixin.qq.com/',
+    },
+    redirect: 'follow',
+  });
+  if (!res.ok) throw new Error(`本地抓取失败: HTTP ${res.status}`);
+  let html = await res.text();
+  if (html.includes('环境异常') || html.includes('js_verify')) {
+    throw new Error('本地抓取失败: 微信验证页面，请检查网络环境');
+  }
+  html = html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '');
+  html = html.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '');
+  return html;
+}
 const MAX_POLL_ATTEMPTS = 60;
 
 const API_URL = process.env.WEB_PUBLISHER_API_URL;
@@ -104,6 +132,12 @@ async function runPublish(action) {
   }
 
   try {
+    if (isWechatUrl(opts.url)) {
+      process.stderr.write('[local] 检测到微信文章，本地提取 HTML...\n');
+      body.html = await fetchHtmlLocally(opts.url);
+      process.stderr.write('[local] HTML 提取成功，提交任务...\n');
+    }
+
     process.stderr.write(`[0%] 提交任务...\n`);
     const response = await apiRequest('POST', '/pipeline', body);
     process.stderr.write(`任务已创建: ${response.jobId}\n`);
@@ -145,7 +179,7 @@ async function runStatus() {
 
 function showHelp() {
   console.log(`
-web-publisher-skill v0.2.2 — 将网页文章发布到微信公众号
+web-publisher-skill v0.2.3 — 将网页文章发布到微信公众号
 
 用法:
   scripts/run.js <command> <url> [选项]

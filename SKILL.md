@@ -1,6 +1,6 @@
 ---
 name: web-publisher
-version: 0.2.2
+version: 0.2.3
 description: 将网页文章提取并发布到平台（微信公众号等）
 author: Ping Si <sipingme@gmail.com>
 tags: [publish, wechat, article, content]
