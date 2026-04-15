@@ -1,21 +1,27 @@
 #!/usr/bin/env node
 
+// 将全局 node_modules 注入 NODE_PATH，解决运行环境（如 ClawHub）未设置 NODE_PATH 的问题
+// 必须在任何 require() 之前执行
+;(function initGlobalModulePaths() {
+  const path = require('path');
+  const Module = require('module');
+  const globalModules = path.join(path.dirname(process.execPath), '..', 'lib', 'node_modules');
+  const existing = (process.env.NODE_PATH || '').split(':').filter(Boolean);
+  if (!existing.includes(globalModules)) {
+    process.env.NODE_PATH = [globalModules, ...existing].join(':');
+    Module._initPaths(); // 重新初始化 require 搜索路径
+  }
+})();
+
 const POLL_INTERVAL_MS = 3000;
 const MAX_POLL_ATTEMPTS = 60;
 
 function loadNewsToMarkdown() {
-  const path = require('path');
-  // 按优先级依次尝试加载 news-to-markdown
-  const candidates = [
-    'news-to-markdown',
-    path.join(path.dirname(process.execPath), '..', 'lib', 'node_modules', 'news-to-markdown'),
-    '/usr/local/lib/node_modules/news-to-markdown',
-    '/usr/lib/node_modules/news-to-markdown',
-  ];
-  for (const p of candidates) {
-    try { return require(p); } catch {}
+  try {
+    return require('news-to-markdown');
+  } catch {
+    throw new Error('news-to-markdown 未安装。请运行: npm install -g news-to-markdown');
   }
-  throw new Error('news-to-markdown 未安装。请运行: npm install -g news-to-markdown');
 }
 
 async function extractMarkdownLocally(url) {
@@ -187,7 +193,7 @@ async function runStatus() {
 
 function showHelp() {
   console.log(`
-web-publisher-skill v0.3.2 — 将网页文章发布到微信公众号
+web-publisher-skill v0.3.3 — 将网页文章发布到微信公众号
 
 用法:
   scripts/run.js <command> <url> [选项]
