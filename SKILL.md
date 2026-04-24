@@ -1,7 +1,7 @@
 ---
 name: web-publisher
 version: 0.3.5
-description: 将网页文章发布到微信公众号（支持知乎、头条、36kr、CSDN 等）。输入一个 URL，自动提取正文并发布。可配合 browser-web-search skill 先搜索文章拿到 URL，再批量发布；也可配合 news-to-markdown skill 预览提取结果。
+description: 输入文章 URL，自动提取正文并发布到微信公众号。支持头条、微信、知乎、36kr、CSDN、小红书等平台提取。可配合 browser-web-search skill 先搜索拿到 URL 再批量发布。
 author: Ping Si <sipingme@gmail.com>
 tags: [publish, wechat, article, content]
 requiredEnvVars:
@@ -12,14 +12,14 @@ requiredEnvVars:
 
 # Web Publisher
 
-将任意网页文章自动提取、处理并发布到内容平台。
+将任意网页文章自动提取、处理并发布到微信公众号。
 
 ## 功能
 
 - **文章提取**: 从 URL 自动提取文章内容、标题、作者、封面图
-- **图片处理**: 自动下载文章图片，上传到目标平台
+- **图片处理**: 自动下载文章图片，上传到微信
 - **AI 改写**: 可选的 AI 内容改写（Minimax）
-- **平台发布**: 发布到微信公众号（更多平台即将支持）
+- **平台发布**: 创建草稿或直接发布到微信公众号
 
 ## 前置要求
 
@@ -33,8 +33,16 @@ requiredEnvVars:
 
 ### 3. 安装本地依赖
 
+`scripts/run.js` 通过 `require('news-to-markdown')` 调用正文提取库，必须全局安装：
+
 ```bash
-npm install -g news-to-markdown
+npm install -g news-to-markdown@^3.2.0
+```
+
+**可选**：如果需要"搜索关键词 → 批量发布"功能，还需安装 `browser-web-search`（同时需要 OpenClaw）：
+
+```bash
+npm install -g browser-web-search@^0.3.9
 ```
 
 ### 4. 配置环境变量
@@ -51,7 +59,7 @@ npm install -g news-to-markdown
 
 ### 🔗 与其他 Skill 配合的完整流水线
 
-当用户想"搜索 + 发布"时，需要三个 Skill 协作：
+当用户想"搜索 + 发布"时，需要两个 Skill 协作：
 
 ```
 browser-web-search  →  (URL 列表)  →  web-publisher
@@ -75,6 +83,8 @@ scripts/run.js draft <url3>
 
 ---
 
+### 单篇发布
+
 当用户要求将网页文章发布或保存到微信公众号时，使用以下命令：
 
 - 创建草稿: `scripts/run.js draft <url>`
@@ -84,11 +94,9 @@ scripts/run.js draft <url3>
 **注意**：
 - 默认创建草稿，不会自动发布。用户明确说「发布」时才使用 publish 命令。
 - 本地提取内容可能需要 30-60 秒，属正常现象。
-- 若提取失败提示未安装 news-to-markdown，请提醒用户运行 `npm install -g news-to-markdown`。
+- 若提示未安装依赖，请提醒用户运行 `npm install -g news-to-markdown@^3.2.0`。
 
 ## 使用示例
-
-以下是在 OpenClaw 中与 AI 对话使用本 Skill 的示例：
 
 ### 示例 1：知乎/头条文章存为草稿
 
@@ -164,7 +172,7 @@ scripts/run.js status job_abc123
 
 **内容来源**（文章从哪里提取）：
 
-`news-to-markdown` 负责从以下平台提取正文，`web-publisher` 在本地调用它：
+`news-to-markdown` 负责从以下平台提取正文，`web-publisher` 在本地通过 `require` 调用它：
 
 | 平台 | 提取 | 搜索支持 | 备注 |
 |------|------|----------|------|
@@ -185,7 +193,7 @@ scripts/run.js status job_abc123
 ```
 URL → 本地 news-to-markdown（提取 Markdown）
     → 服务器 markdown-ai-rewriter（可选，AI 改写）
-    → wechat-md-publisher（上传图片+发布）
+    → wechat-md-publisher（上传图片 + 发布）
 ```
 
 **搜索发布模式**（配合 browser-web-search）：
@@ -193,7 +201,7 @@ URL → 本地 news-to-markdown（提取 Markdown）
 关键词 → browser-web-search（搜索，产出 URL 列表）
        → 本地 news-to-markdown（提取正文）
        → 服务器 markdown-ai-rewriter（可选，AI 改写）
-       → wechat-md-publisher（上传图片+发布）
+       → wechat-md-publisher（上传图片 + 发布）
 ```
 
 ## 安全与信任说明
@@ -202,7 +210,7 @@ URL → 本地 news-to-markdown（提取 Markdown）
 
 1. **本地**：`news-to-markdown` 从目标网页提取 Markdown 文本
 2. **发送到服务器**：原始 URL + 提取的 Markdown 内容 + 你的 API Key
-3. **服务器端**：从 Markdown 中的图片 URL 下载图片（会访问原始网页的图床），上传到微信，最终调用微信 API 创建草稿或发布
+3. **服务器端**：从 Markdown 中的图片 URL 下载图片，上传到微信，最终调用微信 API 创建草稿或发布
 
 > ⚠️ 服务器会收到原始 URL 和全文内容，并在发布时从原图片地址下载图片。
 
