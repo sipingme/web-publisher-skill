@@ -13,8 +13,8 @@
   }
 })();
 
-const POLL_INTERVAL_MS = 3000;
-const MAX_POLL_ATTEMPTS = 60;
+const POLL_INTERVAL_MS = 5000;
+const MAX_POLL_ATTEMPTS = 120; // 最长等待 10 分钟，避免假超时导致 AI 重试产生重复草稿
 
 function loadNewsToMarkdown() {
   try {

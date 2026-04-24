@@ -1,7 +1,7 @@
 ---
 name: web-publisher
 version: 0.3.4
-description: 本地提取网页文章内容，发布到微信公众号（支持知乎、头条、36kr、CSDN 等）
+description: 将网页文章发布到微信公众号（支持知乎、头条、36kr、CSDN 等）。输入一个 URL，自动提取正文并发布。可配合 browser-web-search skill 先搜索文章拿到 URL，再批量发布；也可配合 news-to-markdown skill 预览提取结果。
 author: Ping Si <sipingme@gmail.com>
 tags: [publish, wechat, article, content]
 requiredEnvVars:
@@ -49,6 +49,32 @@ npm install -g news-to-markdown
 
 ## 给 AI 的使用说明
 
+### 🔗 与其他 Skill 配合的完整流水线
+
+当用户想"搜索 + 发布"时，需要三个 Skill 协作：
+
+```
+browser-web-search  →  (URL 列表)  →  web-publisher
+      搜索                               提取 + 发布
+```
+
+**典型例子**：用户说"帮我把今日头条最新 3 篇关于 AI Search 的文章发布到公众号"
+
+```bash
+# Step 1：用 browser-web-search 搜索，拿到 URL 列表
+bws toutiao/search "ai search" --count 3 --sort time
+# 返回: [{ title, url }, { title, url }, { title, url }]
+
+# Step 2：对每个 url 调用 web-publisher 发布
+scripts/run.js draft <url1>
+scripts/run.js draft <url2>
+scripts/run.js draft <url3>
+```
+
+**注意**：如果用户只给了关键词（没有 URL），必须先调用 `browser-web-search` 获取 URL，再调用本 Skill。如果用户直接给了 URL，跳过第一步。
+
+---
+
 当用户要求将网页文章发布或保存到微信公众号时，使用以下命令：
 
 - 创建草稿: `scripts/run.js draft <url>`
@@ -88,7 +114,21 @@ scripts/run.js draft https://mp.weixin.qq.com/s/xxxxx
 scripts/run.js draft https://36kr.com/p/xxx --rewrite --style casual
 ```
 
-### 示例 4：直接发布
+### 示例 4：搜索后批量发布（配合 browser-web-search）
+
+> 用户：帮我把今日头条最新 3 篇关于「AI Search」的文章发布到公众号草稿
+
+```bash
+# Step 1：搜索（调用 browser-web-search skill）
+bws toutiao/search "AI Search" --count 3 --sort time
+
+# Step 2：对每个 url 创建草稿（调用本 skill）
+scripts/run.js draft https://www.toutiao.com/article/111
+scripts/run.js draft https://www.toutiao.com/article/222
+scripts/run.js draft https://www.toutiao.com/article/333
+```
+
+### 示例 5：直接发布
 
 > 用户：把这篇文章直接发布到公众号 https://example.com/article
 
@@ -96,7 +136,7 @@ scripts/run.js draft https://36kr.com/p/xxx --rewrite --style casual
 scripts/run.js publish https://example.com/article
 ```
 
-### 示例 5：查询任务状态
+### 示例 6：查询任务状态
 
 > 用户：上次那个发布任务完成了吗？
 
@@ -127,10 +167,19 @@ scripts/run.js status job_abc123
 
 ## 工作原理
 
+**单篇模式**（直接给 URL）：
 ```
 URL → 本地 news-to-markdown（提取 Markdown）
     → 服务器 markdown-ai-rewriter（可选，AI 改写）
     → wechat-md-publisher（上传图片+发布）
+```
+
+**搜索发布模式**（配合 browser-web-search）：
+```
+关键词 → browser-web-search（搜索，产出 URL 列表）
+       → 本地 news-to-markdown（提取正文）
+       → 服务器 markdown-ai-rewriter（可选，AI 改写）
+       → wechat-md-publisher（上传图片+发布）
 ```
 
 ## 安全与信任说明
