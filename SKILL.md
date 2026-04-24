@@ -1,6 +1,6 @@
 ---
 name: web-publisher
-version: 0.3.4
+version: 0.3.5
 description: 将网页文章发布到微信公众号（支持知乎、头条、36kr、CSDN 等）。输入一个 URL，自动提取正文并发布。可配合 browser-web-search skill 先搜索文章拿到 URL，再批量发布；也可配合 news-to-markdown skill 预览提取结果。
 author: Ping Si <sipingme@gmail.com>
 tags: [publish, wechat, article, content]
@@ -155,15 +155,29 @@ scripts/run.js status job_abc123
 
 ## 支持平台
 
-| 平台 | 提取 | 发布 | 备注 |
-|------|------|------|------|
-| 微信公众号 | ✅ | ✅ | |
-| 今日头条 | ✅ | - | |
-| 知乎 | ✅ | - | |
-| 36kr | ✅ | - | |
-| 人人都是产品经理 | ✅ | - | |
-| CSDN | ✅ | - | |
-| 小红书 | ✅ | - | 部分内容需登录 |
+**发布目标**（内容发布到哪里）：
+
+| 平台 | 状态 | 说明 |
+|------|------|------|
+| 微信公众号 | ✅ 支持 | 创建草稿或直接发布 |
+| 更多平台 | 🚧 规划中 | - |
+
+**内容来源**（文章从哪里提取）：
+
+`news-to-markdown` 负责从以下平台提取正文，`web-publisher` 在本地调用它：
+
+| 平台 | 提取 | 搜索支持 | 备注 |
+|------|------|----------|------|
+| 今日头条 | ✅ | ✅ `bws toutiao/search` | 可配合 browser-web-search 批量搜索后发布 |
+| 微信公众号 | ✅ | ✅ `bws weixin/search` | |
+| 知乎 | ✅ | ✅ `bws zhihu/search` | |
+| 36kr | ✅ | ✅ `bws 36kr/search` | |
+| CSDN | ✅ | ✅ `bws csdn/search` | |
+| 小红书 | ✅ | ✅ `bws xiaohongshu/search` | 部分内容需登录 |
+| 人人都是产品经理 | ✅ | - | 暂无 bws 搜索支持 |
+| 任意网页 | ✅ | - | 通用提取，效果不保证 |
+
+> **搜索支持** 列表示：可先用 `browser-web-search` skill 搜索该平台，拿到 URL 后再交给本 Skill 发布。
 
 ## 工作原理
 
