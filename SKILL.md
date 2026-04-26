@@ -183,20 +183,29 @@ scripts/run.js status job_abc123
 
 **内容来源**（文章从哪里提取）：
 
-`news-to-markdown` 负责从以下平台提取正文，`web-publisher` 在本地通过 `require` 调用它：
+内容提取由本地安装的 `news-to-markdown` 完成，支持以下平台：
 
-| 平台 | 提取 | 搜索支持 | 备注 |
-|------|------|----------|------|
-| 今日头条 | ✅ | ✅ `bws toutiao/search` | 可配合 browser-web-search 批量搜索后发布 |
-| 微信公众号 | ✅ | ✅ `bws weixin/search` | |
-| 知乎 | ✅ | ✅ `bws zhihu/search` | |
-| 36kr | ✅ | ✅ `bws 36kr/search` | |
-| CSDN | ✅ | ✅ `bws csdn/search` | |
-| 小红书 | ✅ | ✅ `bws xiaohongshu/search` | 部分内容需登录 |
-| 人人都是产品经理 | ✅ | - | 暂无 bws 搜索支持 |
-| 任意网页 | ✅ | - | 通用提取，效果不保证 |
+| 平台 | 提取 | 可配合搜索 |
+|------|------|-----------|
+| 今日头条 | ✅ | ✅ |
+| 微信公众号 | ✅ | ✅ |
+| 知乎 | ✅ | ✅ |
+| 36kr | ✅ | ✅ |
+| CSDN | ✅ | ✅ |
+| 小红书 | ✅ | ✅（部分内容需登录） |
+| 人人都是产品经理 | ✅ | - |
+| 任意网页 | ✅（通用模式） | - |
 
-> **搜索支持** 列表示：可先用 `browser-web-search` skill 搜索该平台，拿到 URL 后再交给本 Skill 发布。
+配合 `browser-web-search` 搜索时，可直接使用对应命令获取 URL 列表：
+
+```
+bws toutiao/search <关键词>
+bws weixin/search  <关键词>
+bws zhihu/search   <关键词>
+bws 36kr/search    <关键词>
+bws csdn/search    <关键词>
+bws xiaohongshu/search <关键词>
+```
 
 ## 工作原理
 
