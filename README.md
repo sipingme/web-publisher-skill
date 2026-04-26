@@ -48,6 +48,8 @@
 | `--style <style>` | 改写风格 | casual |
 | `--prompt <text>` | 自定义改写提示 | - |
 
+**可用主题**：`blackink`（默认）、`default`、`orangesun`、`redruby`、`greenmint`、`purplerain`
+
 ## 支持平台
 
 | 平台 | 提取 | 发布 | 状态 |

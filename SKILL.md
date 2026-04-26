@@ -161,6 +161,17 @@ scripts/run.js status job_abc123
 | `--style <style>` | 改写风格 | casual |
 | `--prompt <text>` | 自定义改写提示 | - |
 
+**可用主题**（`--theme` 参数值）：
+
+| 主题 ID | 名称 | 风格 |
+|---------|------|------|
+| `blackink` | Black Ink | 深色模式，靛蓝点缀（默认） |
+| `default` | 默认主题 | 简洁清爽，适合各类文章 |
+| `orangesun` | Orange Sun | 温暖明亮，橙色系 |
+| `redruby` | Red Ruby | 优雅大气，宝石红 |
+| `greenmint` | Green Mint | 清新薄荷绿 |
+| `purplerain` | Purple Rain | 梦幻紫色渐变 |
+
 ## 支持平台
 
 **发布目标**（内容发布到哪里）：
