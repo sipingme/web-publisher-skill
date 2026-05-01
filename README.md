@@ -1,15 +1,29 @@
 # Web Publisher Skill
 
-将任意网页文章自动提取、改写、发布到内容平台（目前支持微信公众号）的 OpenClaw Skill。
-**纯 HTTP 调用，不安装任何 npm 依赖**——抓取、图片下载、AI 改写、发布全部由服务端完成。
+将任意网页文章 / 本地文档（PDF / DOCX / PPTX / XLSX / EPUB / 图片 / 音频）自动提取、改写、发布到内容平台（目前支持微信公众号）的 OpenClaw Skill。
+**纯 HTTP 调用，CLI 自身不装任何 npm 依赖**——抓取、文档转换 (markitdown)、图片下载、AI 改写、发布全部由服务端完成。
+
+> **建议同时安装 [`news-to-markdown`](https://www.npmjs.com/package/news-to-markdown) skill。** 服务端 pipeline 走云端固定 IP，**对小红书、部分知乎专栏、登录墙文章、海外站点等容易被反爬挡掉**；这种情况下用 `news-to-markdown` 在本地（你的家庭 IP / 真实浏览器）抓取兜底，是唯一可行办法。可选再装 `browser-web-search` 用于「先搜索再批量发布」。
 
 ## 功能
 
 - **网页 → 公众号一键发布**：交给一个 URL，剩下交给服务端
+- **本地文档 → 公众号一键发布**：直接把 PDF / DOCX / PPTX 路径丢给 `draft` / `publish`，服务端用 markitdown 转 markdown，然后走和 URL 一样的改写 + 封面 + 发布流程
+- **任意文档 → markdown**：`convert` 命令把文档转成 markdown 文本（不发布），可加 `--out` 写文件，大文件加 `--async` 走后台任务避免 CDN 60s 超时
 - **平台适配**：微信、知乎、36kr、CSDN、今日头条、小红书、人人都是产品经理 + 通用回退
 - **图片处理**：服务端下载文章图片并自动上传到微信媒体库
 - **AI 改写**（可选）：Minimax 驱动的分段改写，多种风格
 - **对话式接入**：登录、绑定公众号都通过浏览器一次性短链完成，**AppSecret 永不进入对话**
+- **抓不到的站点有兜底**：服务端 IP 被站点挡掉时，改用本地 `news-to-markdown` 抓取，再走发布流程
+
+## 推荐配套 skill
+
+| skill | 作用 | 安装 | 何时需要 |
+|---|---|---|---|
+| [`news-to-markdown`](https://www.npmjs.com/package/news-to-markdown) | 在你本地把 URL 抓成 Markdown（17 个平台专项适配 + 通用回退） | `npm i -g news-to-markdown` | **服务端抓取失败时必备**：小红书、部分知乎专栏、登录墙文章、海外站点 |
+| `browser-web-search` | 关键词 → URL 列表 | 见 skill 文档 | 你只有话题没有具体 URL 时 |
+
+> 本 skill 自身依然零依赖；上面两个是 **配套** 而非硬依赖。但实际使用中，没装 news-to-markdown 时，遇到反爬站点 `draft / publish` 会直接报 `抓取失败`，无法挽救。
 
 ## 快速开始
 
@@ -32,7 +46,17 @@ AI 会执行 `scripts/run.js login`，CLI 会打印一条一次性短链：
 
 AI 调用 `scripts/run.js wechat config`，CLI 同样打印短链。在浏览器表单里填 AppID/AppSecret 即可，**AppSecret 直接 POST 到服务端 AES-256-GCM 加密落库，永不进入对话上下文**。
 
+> Agent 必须把 CLI 输出里的完整裸 URL 原样发给用户，例如 `https://tools.siping.me/skill/wechat?t=...`，不要只回复「点击填写 AppID/AppSecret」这种没有 href 的文字。
+
 同一页面会展示需要在 mp.weixin.qq.com 后台加入 IP 白名单的服务器 IP——这一步只能你自己去公众号后台操作。
+
+### 3)（专业版及以上可选）让每篇文章自动加页眉页脚
+
+> 帮我配置文章页眉和文末二维码
+
+AI 会执行 `scripts/run.js wrapper config`，再次给一条短链。在浏览器表单里写 Markdown 内容（图片、加粗、引用、二维码图片都行），保存后默认启用，下一次发布或存草稿时 pipeline 会**自动**把页眉拼到正文最前、页脚拼到正文最后；如果开了 `--rewrite`，页眉页脚内容**不会**被 AI 改写。
+
+随时 `wrapper off` 暂停、`wrapper on` 恢复，内容保留不删；`wrapper status` 看当前字数和是否启用。
 
 完成。直接说「把这篇文章发到公众号草稿 https://...」就能用了。
 
@@ -61,7 +85,15 @@ AI 调用 `scripts/run.js wechat config`，CLI 同样打印短链。在浏览器
 
 > 把这篇文章直接发布到公众号 https://example.com/article
 
+> 把这个 PDF 存到公众号草稿 ./drafts/2025-q4-report.pdf
+
+> 把 ~/Downloads/slide.pptx 改写后发到公众号
+
+> 帮我把这个 PDF 转成 markdown 存到 paper.md：./papers/whitepaper.pdf
+
 ## 可用选项
+
+发布命令（`draft` / `publish`，参数 `<input>` 可以是 URL 或本地文件路径）：
 
 | 选项 | 说明 | 默认值 |
 |---|---|---|
@@ -69,6 +101,14 @@ AI 调用 `scripts/run.js wechat config`，CLI 同样打印短链。在浏览器
 | `--rewrite` | 启用 AI 改写 | 关闭 |
 | `--style <style>` | 改写风格：`casual` / `formal` / `technical` / `creative` | `casual` |
 | `--prompt <text>` | 自定义改写提示 | - |
+
+`convert` 命令（文档 → markdown，不发布）：
+
+| 选项 | 说明 | 默认值 |
+|---|---|---|
+| `--out <file>` | 把 markdown 写到文件（stdout 只回 JSON 摘要，避免大段正文撑爆 AI 上下文） | 无（直接 stdout） |
+| `--async` | 走 `/convert/async` 异步任务；学术 PDF / 扫描件 / 音频转录建议加 | 同步 |
+| `--timeout <ms>` | 单次转换超时；服务端封顶 600000 (10min) | 服务端 5min |
 
 **可用主题**：
 
@@ -99,16 +139,27 @@ AI 调用 `scripts/run.js wechat config`，CLI 同样打印短链。在浏览器
 ## 工作原理
 
 ```
-URL ──▶ /pipeline (服务端)
-         │
-         ├─ news-to-markdown        抓取正文 + 标题 + 封面
-         ├─ markdown-ai-rewriter    可选，AI 改写
-         └─ wechat-md-publisher     上传图片 + 创建草稿 / 发布
-                ▼
-         返回 jobId，CLI 轮询直到完成
+draft / publish:
+  URL    ──▶ /pipeline (JSON)         本地文件 ──▶ /pipeline (multipart)
+                  │                                    │
+                  ├─ news-to-markdown (URL 抓正文)     ├─ markitdown (PDF/DOCX/...转 md)
+                  │     ⚠️ 反爬站可能 fail              │
+                  │     → 本地 news-to-markdown 兜底    │
+                  ├─ markdown-ai-rewriter (可选 --rewrite)
+                  ├─ user-wrapper       (可选 wrapper on)
+                  └─ wechat-md-publisher 上传图片 + 草稿/发布
+                         ▼
+                  返回 jobId，CLI 轮询直到完成
+
+convert:
+  URL 或本地文件 ──▶ /convert (sync)  或  /convert/async (--async)
+                       │
+                       └─ markitdown 子进程 → markdown 字节
+                              ▼
+                  sync 直接返回 markdown；async 返回 jobId 由 CLI 轮询
 ```
 
-CLI 只负责凭证管理 + HTTP 调用，**完全没有本地依赖**。
+CLI 自身只负责凭证管理 + HTTP 调用 + 本地文件读字节并 multipart 上传，**没有本地依赖**；推荐另装 `news-to-markdown` 应对服务端抓不到的站点，但不是硬依赖。
 
 ## License
 

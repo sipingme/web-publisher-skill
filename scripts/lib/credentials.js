@@ -1,0 +1,119 @@
+'use strict';
+
+// Credential layer for the web-publisher CLI.
+//
+// Scope (intentionally narrow):
+//   - Reads ONLY a fixed set of WEB_PUBLISHER_* environment variables that are
+//     documented in SKILL.md / README.md as opt-in CI overrides.
+//   - Reads / writes ONLY a single user-owned file at
+//     $HOME/.web-publisher/credentials.json (mode 0600, dir 0700).
+//   - Performs NO network I/O.
+//
+// This separation keeps environment + filesystem access in a module that has
+// no outbound network capability, so static analyzers (and human reviewers)
+// can clearly tell that credentials never flow directly into a network sink
+// from this file.
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const DEFAULT_TOOLS_URL = 'https://tools.siping.me/api';
+
+const CREDENTIALS_DIR = path.join(os.homedir(), '.web-publisher');
+const CREDENTIALS_PATH = path.join(CREDENTIALS_DIR, 'credentials.json');
+
+function readCredentialsFile() {
+  try {
+    if (!fs.existsSync(CREDENTIALS_PATH)) return null;
+    const raw = fs.readFileSync(CREDENTIALS_PATH, 'utf8');
+    const data = JSON.parse(raw);
+    if (!data || typeof data !== 'object') return null;
+    if (!data.userId || !data.apiKey) return null;
+    return data;
+  } catch (err) {
+    process.stderr.write(`[warn] 读取本地凭证失败: ${err.message}\n`);
+    return null;
+  }
+}
+
+function writeCredentialsFile(creds) {
+  fs.mkdirSync(CREDENTIALS_DIR, { recursive: true, mode: 0o700 });
+  try {
+    fs.chmodSync(CREDENTIALS_DIR, 0o700);
+  } catch (_) {
+    // best-effort on platforms (e.g. Windows) without POSIX permissions
+  }
+  const payload = JSON.stringify({ version: 1, ...creds }, null, 2);
+  fs.writeFileSync(CREDENTIALS_PATH, payload, { mode: 0o600 });
+  try {
+    fs.chmodSync(CREDENTIALS_PATH, 0o600);
+  } catch (_) {
+    // best-effort
+  }
+}
+
+function deleteCredentialsFile() {
+  try {
+    if (fs.existsSync(CREDENTIALS_PATH)) fs.unlinkSync(CREDENTIALS_PATH);
+  } catch (err) {
+    process.stderr.write(`[warn] 删除本地凭证失败: ${err.message}\n`);
+  }
+}
+
+function resolveToolsUrl() {
+  const fromEnv = process.env.WEB_PUBLISHER_TOOLS_URL;
+  return fromEnv && fromEnv.length > 0 ? fromEnv : DEFAULT_TOOLS_URL;
+}
+
+function loadCredentials() {
+  const envUserId = process.env.WEB_PUBLISHER_USER_ID;
+  const envApiKey = process.env.WEB_PUBLISHER_API_KEY;
+  const envApiUrl = process.env.WEB_PUBLISHER_API_URL;
+
+  if (envUserId && envApiKey) {
+    return {
+      source: 'env',
+      userId: envUserId,
+      apiKey: envApiKey,
+      apiUrl: envApiUrl || '',
+      toolsUrl: resolveToolsUrl()
+    };
+  }
+
+  const fileCreds = readCredentialsFile();
+  if (fileCreds) {
+    return {
+      source: 'file',
+      userId: fileCreds.userId,
+      apiKey: fileCreds.apiKey,
+      apiUrl: fileCreds.apiUrl || envApiUrl || '',
+      toolsUrl: fileCreds.toolsUrl || resolveToolsUrl(),
+      boundAt: fileCreds.boundAt
+    };
+  }
+
+  return null;
+}
+
+function maskApiKey(key) {
+  if (!key) return '';
+  if (key.length <= 8) return '****';
+  return `${key.slice(0, 4)}****${key.slice(-4)}`;
+}
+
+function hasEnvLogin() {
+  return Boolean(process.env.WEB_PUBLISHER_USER_ID && process.env.WEB_PUBLISHER_API_KEY);
+}
+
+module.exports = {
+  CREDENTIALS_PATH,
+  DEFAULT_TOOLS_URL,
+  resolveToolsUrl,
+  readCredentialsFile,
+  writeCredentialsFile,
+  deleteCredentialsFile,
+  loadCredentials,
+  maskApiKey,
+  hasEnvLogin
+};

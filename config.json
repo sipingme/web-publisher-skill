@@ -1,6 +1,6 @@
 {
   "name": "web-publisher",
-  "version": "0.5.1",
+  "version": "0.7.0",
   "requiredEnvVars": [],
   "requires": {
     "runtime": {
@@ -11,7 +11,7 @@
   },
   "skill": {
     "name": "web-publisher",
-    "version": "0.5.1",
+    "version": "0.7.0",
     "enabled": true,
     "autoInvoke": false
   },
@@ -41,15 +41,40 @@
       "args": ["wechat", "status"],
       "description": "查询当前微信公众号配置状态"
     },
+    "wrapper-config": {
+      "script": "./scripts/run.js",
+      "args": ["wrapper", "config"],
+      "description": "生成一次性短链，在浏览器里编辑文章页眉/页脚 Markdown"
+    },
+    "wrapper-status": {
+      "script": "./scripts/run.js",
+      "args": ["wrapper", "status"],
+      "description": "查看当前页眉页脚字数与是否启用"
+    },
+    "wrapper-on": {
+      "script": "./scripts/run.js",
+      "args": ["wrapper", "on"],
+      "description": "启用页眉页脚（要求已配置页眉或页脚）"
+    },
+    "wrapper-off": {
+      "script": "./scripts/run.js",
+      "args": ["wrapper", "off"],
+      "description": "关闭页眉页脚（保留已存内容）"
+    },
     "publish": {
       "script": "./scripts/run.js",
       "args": ["publish"],
-      "description": "将网页文章提取并发布到平台（默认创建草稿）"
+      "description": "将网页文章 / 本地文档（PDF/DOCX/PPTX/...）发布到平台。<input> 是 URL 或本地文件路径"
     },
     "draft": {
       "script": "./scripts/run.js",
       "args": ["draft"],
-      "description": "将网页文章提取并创建草稿"
+      "description": "将网页文章 / 本地文档（PDF/DOCX/PPTX/...）保存为草稿。<input> 是 URL 或本地文件路径"
+    },
+    "convert": {
+      "script": "./scripts/run.js",
+      "args": ["convert"],
+      "description": "把任意文档（PDF/DOCX/PPTX/XLSX/EPUB/图片/音频/网页）转成 Markdown，不发布。可加 --out <file> 写文件、--async 走异步任务、--timeout <ms> 调单次上限"
     },
     "status": {
       "script": "./scripts/run.js",
@@ -75,25 +100,47 @@
     "type": "config-only",
     "autoInstall": true,
     "riskLevel": "low",
-    "riskReason": "此 Skill 仅通过 HTTP API 调用远程服务，不安装任何第三方包，不执行本地命令。凭证存储在 ~/.web-publisher/credentials.json (mode 0600)。",
+    "riskReason": "此 Skill 仅通过 HTTP API 调用远程服务，不安装任何第三方包，不执行本地命令。凭证存储在 ~/.web-publisher/credentials.json (mode 0600)。draft / publish / convert 接受本地文件路径时，CLI 只读 basename + 文件字节并 multipart 上传到服务端，不带绝对路径。",
     "requiresApproval": false
   },
   "dependencies": {
     "npm": [],
     "binaries": [],
-    "note": "No npm dependencies. URL 抓取 / 图片下载 / AI 改写 / 发布全部由服务端 (pipeline API) 完成，CLI 仅做凭证管理 + HTTP 调用。"
+    "note": "No npm dependencies. URL 抓取 / 图片下载 / 文档转换 (markitdown) / AI 改写 / 发布默认由服务端 (pipeline API) 完成；本地文件通过 Node 18 内建的 FormData multipart 上传，CLI 仍不引第三方依赖。"
   },
+  "recommendedSkills": [
+    {
+      "name": "news-to-markdown",
+      "type": "npm-cli",
+      "install": "npm install -g news-to-markdown",
+      "purpose": "本地兜底：服务端 pipeline 因云端 IP 被反爬站点挡掉时（小红书、部分知乎专栏、登录墙、海外站点），改用本地 IP 抓取 URL → Markdown",
+      "required": false
+    },
+    {
+      "name": "browser-web-search",
+      "type": "skill",
+      "purpose": "用户只给关键词没有具体 URL 时，先搜索拿 URL 列表再批量发布",
+      "required": false
+    }
+  ],
   "permissions": {
     "filesystem": {
-      "read": ["~/.web-publisher/credentials.json"],
-      "write": ["~/.web-publisher/credentials.json"]
+      "read": [
+        "~/.web-publisher/credentials.json",
+        "<user-supplied input file passed to draft|publish|convert>",
+        "<user-supplied --out path written by convert>"
+      ],
+      "write": [
+        "~/.web-publisher/credentials.json",
+        "<user-supplied --out path passed to convert>"
+      ]
     },
     "network": {
       "domains": [
         "tools.siping.me",
         "<WEB_PUBLISHER_API_URL>"
       ],
-      "note": "Calls tools.siping.me for account onboarding and the user-configured pipeline API for publishing."
+      "note": "Calls tools.siping.me for account onboarding and the user-configured pipeline API for publishing / converting. Local files supplied to draft|publish|convert are streamed via multipart to the pipeline API; the agent does not read arbitrary files outside what the user explicitly passes."
     }
   },
   "capabilities": {
@@ -110,6 +157,7 @@
           "默认使用 draft 模式，不自动发布",
           "凭证文件权限 0600，仅当前用户可读",
           "AppSecret 永不进入对话上下文（在浏览器表单提交，AES-256-GCM 加密落库）",
+          "Wrapper 内容由用户在浏览器表单提交，避免敏感联系方式（二维码、微信号）落入对话上下文",
           "logout 命令可远端撤销 apiKey 并清理本地文件",
           "所有操作可在 tools.siping.me 审计"
         ]
