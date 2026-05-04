@@ -429,11 +429,67 @@ async function runConvert(args) {
 // Account onboarding
 // ----------------------------------------------------------------------------
 
-async function runLogin() {
+async function runLogin(loginArgs) {
   if (hasEnvLogin()) {
     process.stderr.write('[info] 检测到环境变量已配置，环境变量优先级最高，无需重新登录。\n');
     process.stderr.write('       如需切换账号，请清空 WEB_PUBLISHER_USER_ID / WEB_PUBLISHER_API_KEY 后重试。\n');
     return;
+  }
+
+  const force = Array.isArray(loginArgs) && (loginArgs.includes('--force') || loginArgs.includes('-f'));
+
+  // 已登录检测：避免重复发起 device-code 授权链接。
+  //
+  // 仅判断本地凭证文件是否存在并不可靠——apiKey 可能已经被 logout/revoke
+  // 或在另一台设备上被换掉。所以这里再调用 /skill/whoami 做一次真实的服务端
+  // 校验：apiKey 仍然有效才算"已登录"。
+  //
+  // 网络/服务端异常时不强制让用户重走 device flow（否则 toolsUrl 暂时不通
+  // 就会把用户卡在登录上），而是放行并提示，再给一个 --force 的逃生通道。
+  if (!force) {
+    const existing = loadCredentials();
+    if (existing && existing.source === 'file') {
+      try {
+        const { res, data } = await tools('GET', '/skill/whoami', null, existing);
+        if (res.ok) {
+          const who = data || {};
+          process.stderr.write(`[info] 已检测到本地凭证且仍然有效，跳过授权流程。\n`);
+          process.stderr.write(`       账号：${who.name || who.userId || existing.userId}\n`);
+          process.stderr.write(`       凭证：${CREDENTIALS_PATH}\n`);
+          process.stderr.write(`       如需切换账号或强制重新绑定，请运行：web-publisher login --force\n`);
+          console.log(JSON.stringify({
+            success: true,
+            alreadyLoggedIn: true,
+            userId: who.userId || existing.userId,
+            name: who.name || null,
+            apiKey: maskApiKey(existing.apiKey)
+          }, null, 2));
+          return;
+        }
+        if (res.status === 401 || res.status === 403) {
+          // 本地凭证存在但服务端拒绝：apiKey 已经无效，安静地清掉再走完整流程。
+          process.stderr.write('[info] 本地凭证已失效（服务端拒绝），将重新发起授权…\n');
+          deleteCredentialsFile();
+        } else {
+          // 其他非 2xx：当作未知错误，让用户继续重新绑定。
+          process.stderr.write(`[warn] 校验本地凭证时收到 HTTP ${res.status}，将重新发起授权…\n`);
+        }
+      } catch (err) {
+        // 网络异常：不删本地凭证，也不强制重绑——给用户一个清楚的逃生通道。
+        process.stderr.write(`[warn] 无法连接服务端校验本地凭证（${err.message || err}），跳过授权流程。\n`);
+        process.stderr.write(`       如需强制重新绑定，请运行：web-publisher login --force\n`);
+        console.log(JSON.stringify({
+          success: true,
+          alreadyLoggedIn: true,
+          verified: false,
+          userId: existing.userId,
+          apiKey: maskApiKey(existing.apiKey)
+        }, null, 2));
+        return;
+      }
+    }
+  } else {
+    process.stderr.write('[info] --force 已指定，将忽略本地凭证并重新发起授权。\n');
   }
 
   const toolsUrl = resolveToolsUrl().replace(/\/$/, '');
@@ -709,7 +765,8 @@ function showHelp() {
 web-publisher v${PKG_VERSION} — 将网页文章 / 本地文档发布到微信公众号
 
 账号管理（首次使用）:
-  login              通过浏览器一次性绑定账号，凭证写入本地
+  login [--force]    通过浏览器一次性绑定账号，凭证写入本地
+                     已登录时会自动跳过；--force 可强制重新绑定
   logout             撤销当前 apiKey 并清除本地凭证
   whoami             查看当前账号、apiKey（已脱敏）与微信配置状态
 
@@ -762,7 +819,7 @@ const args = process.argv.slice(3);
   try {
     switch (command) {
       case 'login':
-        await runLogin();
+        await runLogin(args);
         break;
       case 'logout':
         await runLogout();
