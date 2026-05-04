@@ -1,6 +1,6 @@
 ---
 name: web-publisher
-version: 0.9.2
+version: 0.9.3
 description: 输入文章 URL **或本地文档（PDF/DOCX/PPTX/XLSX/EPUB/图片/音频/...）**，自动提取正文、可选 AI 改写、并发布到微信公众号；也可只把任意文档转成 Markdown 文本（不发布）。抓取 / 转换 / 改写 / 发布都在服务端 (tools.siping.me) 完成，CLI 不装任何 npm 依赖；登录、公众号配置全部通过对话 + 一次性浏览器跳转完成。⚠️ 服务端走云端固定 IP，**对小红书、部分知乎专栏、登录墙文章、海外站点经常被反爬挡掉**——此时由 AI Agent（Hermes / Cursor / OpenClaw 等）改调用**用户本地安装的 `news-to-markdown-skill`** 把 URL 抓成 Markdown，然后人工复核 / 归档。也可配合 `browser-web-search` 先搜索拿到 URL 再批量发布。
 author: Ping Si <sipingme@gmail.com>
 tags: [publish, wechat, article, content, onboarding, pdf, docx, markitdown]
@@ -18,7 +18,7 @@ tags: [publish, wechat, article, content, onboarding, pdf, docx, markitdown]
 |---|---|---|
 | 帮我登录 / 注册 / 绑定账号 | `scripts/run.js login` | **fire-and-forget (checkpoint 模型)**：命令 ~0.3s 返回，写 `~/.web-publisher/login-pending.json` 等待用户在浏览器授权。把 stdout JSON 里的 `verifyUrl` **原文**交给用户，附上 `userCode`。**不要 await login** 它已经退出了。等用户说"点完了"再调 `scripts/run.js login-status` 把凭证拉下来 |
 | 检查登录是否完成 / 我登上没 / 完成登录第二步 | `scripts/run.js login-status` | 一次性向服务端查 device-code 状态并写凭证。`state`：`logged-in` = 已登录 **且** 公众号已配置（可以发文章了）；`logged-in-no-wechat` = 账号绑好了但公众号 AppID/AppSecret 还没填齐，**AI 必须自己接着调用 `wechat config`**（不要把命令贴给用户让他敲）然后只把生成的 URL 原文给用户，否则 draft / publish 会失败；`awaiting-browser-confirm` = 用户还没在浏览器点确认（催用户去点，再隔几秒重试本命令）；`expired-pending` = device-code 5 分钟过期了，重跑 `login`；`invalid-credentials` = apiKey 已失效，建议 `login --force`；`polling-failed` = 网络/服务端临时错，可重试本命令；`persist-failed` = 服务端绑定成功但本地写盘失败（看 `note` 里的 fallback 环境变量）；`not-logged-in` = 没启动过 login |
-| 配置/绑定公众号 / 配 AppID | `scripts/run.js wechat config` | 读取 stdout JSON 里的 `url` 字段，把该完整 URL **原文粘贴**给用户（不包装 Markdown 链接、不用"点击此处"替代），并附上 IP 白名单列表 |
+| 配置/绑定公众号 / 配 AppID | `scripts/run.js wechat config` | **两件事必须一并交付，缺一不可**：(1) 把 stdout JSON 里 `url` 字段的完整 URL **原文粘贴**给用户（不包装 Markdown 链接、不用"点击此处"替代）；(2) 把 stdout JSON 里 `serverIps` 数组里的所有 IP 也告诉用户，并明确指引"到 mp.weixin.qq.com → 设置与开发 → 基本配置 → IP 白名单 加入"。漏掉 IP 白名单会让发布时被微信以 invalid IP 拒绝，所以**不能省**。`instruction` 字段已经把这两件事写在一起了，照念即可 |
 | 我现在是谁 / 看看账号 / 余额 | `scripts/run.js whoami` | 报告账号、apiKey 脱敏摘要、微信配置状态 |
 | 公众号配好了吗 | `scripts/run.js wechat status` | 报告 `configured` 与当前 AppID |
 | 退出登录 / 注销 | `scripts/run.js logout` | 报告"已清除本地凭证" |
@@ -82,7 +82,7 @@ AI 必须按这两步走：
    | state | 含义 | AI 该做什么 |
    |---|---|---|
    | `logged-in` | 凭证有效 **且** 微信公众号 AppID/AppSecret 已配置 | 报"已登录，账号 = `<name>`，公众号已就绪，可以使用 draft / publish / convert 了"。stdout JSON 的 `wechat.appId` 可以告诉用户绑定的是哪个公众号 |
-   | `logged-in-no-wechat` | 凭证有效，但 `wechat.configured == false`——账号绑好了但公众号 AppID/AppSecret 还没填齐（stdout 的 `wechat.appId` 非 null 表示 AppID 已留过，仅缺 AppSecret） | **三件事，按顺序做完，别只做前两件**：①不要说"可以直接用了"；②告诉用户"登录成功，但公众号配置还差一步"，措辞按 `wechat.appId` 是否为 null 区分（"AppID 已留过、缺 AppSecret" vs "AppID/AppSecret 都还没填"）；③**AI 自己**立即调用 `scripts/run.js wechat config`，把它返回的 stdout JSON 里 `url` **完整原文**呈现给用户。**不要**给用户贴 `cd ... && node scripts/run.js wechat config` 这种 shell 命令——AI 该自己跑的命令绝不外推给用户。 |
+   | `logged-in-no-wechat` | 凭证有效，但 `wechat.configured == false`——账号绑好了但公众号 AppID/AppSecret 还没填齐（stdout 的 `wechat.appId` 非 null 表示 AppID 已留过，仅缺 AppSecret） | **四件事，按顺序做完**：①不要说"可以直接用了"；②告诉用户"登录成功，但公众号配置还差一步"，措辞按 `wechat.appId` 是否为 null 区分（"AppID 已留过、缺 AppSecret" vs "AppID/AppSecret 都还没填"）；③**AI 自己**立即调用 `scripts/run.js wechat config`，把它返回的 stdout JSON 里 `url` **完整原文**呈现给用户；④**同时**把 `wechat config` 输出里 `serverIps` 数组的所有 IP 也告诉用户，附上"到 mp.weixin.qq.com → 设置与开发 → 基本配置 → IP 白名单 加入"的明确步骤。漏掉 ④ 用户填完 AppID/AppSecret 也发不了文章——微信会以 invalid IP 拒绝。**不要**给用户贴 `cd ... && node scripts/run.js wechat config` 这种 shell 命令——AI 该自己跑的命令绝不外推给用户。 |
    | `awaiting-browser-confirm` | pending 文件存在、device-code 还在 TTL 内、但用户还没在浏览器点确认 | 催用户去浏览器点击"确认绑定"；用户说点完了之后再调一次 `login-status`。**不要立刻轮询本命令**——服务端状态只有用户点了才会变 |
    | `expired-pending` | device-code 5 分钟过期了 | 让用户重跑 `login` |
    | `not-logged-in` | 既没凭证也没 pending checkpoint | 让用户从 `login` 开始 |
@@ -97,6 +97,7 @@ AI 必须按这两步走：
    - ❌ 不要因为 `login` 返回 `success: true` 就告诉用户"已登录"——`pendingCheckpoint: true` 表示**第二步还没做**，必须 `login-status` 返回 `logged-in` 或 `logged-in-no-wechat` 才算 device-code 流程完成。
    - ❌ **不要看到 `logged-in-no-wechat` 也喊"现在可以用 web-publisher 了 / 可以发文章了"**——这个 state 表示账号绑了但公众号 AppID/AppSecret 还没填齐，draft / publish 必然失败（`convert` 仍可用，因为它不接公众号）。要告诉用户"还差一步：配置公众号"，**然后 AI 自己跑** `wechat config`，把它输出的 URL 原文交给用户。
    - ❌ **绝对不要把 `cd ~/.openclaw/workspace/skills/web-publisher && node scripts/run.js wechat config` 这种 shell 命令贴给用户**。`wechat config` 是 AI 自己执行的命令，用户只该看到执行结果（浏览器短链 + IP 白名单）。同样的规则适用于 `login` / `wrapper config` 等所有产生短链的命令——用户对话里只该出现 URL，不该出现 `cd` / `node` / `scripts/run.js` 之类的东西。
+   - ❌ **跑完 `wechat config` 只把短链贴给用户、却不贴 `serverIps` 里的服务器 IP**——这是常见疏忽。AppID/AppSecret 填得再对，没把这些 IP 加到微信公众平台后台 (mp.weixin.qq.com → 设置与开发 → 基本配置 → IP 白名单) 的白名单里，微信调用会直接以 "invalid IP" 拒绝，发布全部失败。`wechat config` 的 stdout JSON 里 `instruction` 字段已经把"URL + IP 白名单"打包成一句话了，原文转达即可。如果 `serverIps` 数组为空，说明服务端没设 `WECHAT_SERVER_IPS`，要提醒用户向管理员索取出口 IP 后再自行加白名单。
    - ❌ 不要用 `--force` 当默认行为；只有 `invalid-credentials` 或用户明确说"切换账号 / 重新绑定"才用。
    - ❌ 不要直接读 `~/.web-publisher/credentials.json` 试图判断登录状态——文件存在不代表 apiKey 还有效，更不代表公众号已配置。永远走 `login-status`。
    - ❌ 不要假定 `login` 之后会自动写凭证——0.9.x 没有后台进程；不调 `login-status`，凭证永远不会被拉下来。
@@ -235,7 +236,7 @@ AI 接下来要做：
 2. 等用户回来说"点完了"。
 3. 调 `scripts/run.js login-status`：
    - `state == "logged-in"` → 报"已登录，账号 = `<name>`，公众号已就绪，可以使用 draft / publish / convert"
-   - `state == "logged-in-no-wechat"` → 看 stdout `wechat.appId`：非 null 时报"已登录，但 AppSecret 还没填好（AppID `<id>` 已留过）"，null 时报"已登录，但还没绑定公众号 AppID/AppSecret"。**两种情况都要 AI 自己立即调用** `scripts/run.js wechat config`，把它返回的 `url` **完整原文**交给用户填写——**不是**把"运行 wechat config 这条命令"作为指令贴给用户
+   - `state == "logged-in-no-wechat"` → 看 stdout `wechat.appId`：非 null 时报"已登录，但 AppSecret 还没填好（AppID `<id>` 已留过）"，null 时报"已登录，但还没绑定公众号 AppID/AppSecret"。**两种情况都要 AI 自己立即调用** `scripts/run.js wechat config`，把它返回的 `url` **完整原文**交给用户填写——**不是**把"运行 wechat config 这条命令"作为指令贴给用户。**同时**把 `wechat config` 输出的 `serverIps` 数组里的所有 IP 也告诉用户，明确指引"到 mp.weixin.qq.com → 设置与开发 → 基本配置 → IP 白名单 加入"——漏掉这一步用户填完表单也发不了文章
    - 其他 state 见上面《登录流程（AI 必看）》
 
    **这一步（login-status）是凭证真正落盘的时机**——0.9.x 没有后台进程，不主动调 login-status，凭证永远不会被拉下来。
@@ -244,9 +245,14 @@ AI 接下来要做：
 
 ### 2. 配置微信公众号
 
-用户说「帮我配置公众号」→ AI 调 `scripts/run.js wechat config` → CLI 打印短链 + 需加白名单的服务器 IP。用户在浏览器表单填 AppID/AppSecret 提交（**AppSecret 直接 POST 到服务端 AES-256-GCM 加密落库，永不进入对话上下文**）。
+用户说「帮我配置公众号」→ AI 调 `scripts/run.js wechat config`。这一步同时给用户**两份信息**，AI 必须**两份都转达**，不能只发一份：
 
-加 IP 白名单只能在 mp.weixin.qq.com 后台完成，无法绕过。
+1. **浏览器短链**（来自 stdout JSON `url` 字段）——用户在该页填 AppID / AppSecret 提交（AppSecret 直接 POST 到服务端 AES-256-GCM 加密落库，永不进入对话上下文）。
+2. **服务器 IP 白名单**（来自 stdout JSON `serverIps` 数组）——用户必须登录 [mp.weixin.qq.com](https://mp.weixin.qq.com) → 设置与开发 → 基本配置 → IP 白名单，把上面所有 IP 加进去。**这一步只能在公众号官方后台完成，CLI / 服务端都无法替代**。
+
+漏掉第 ② 步是新手最常见的踩坑：AppID/AppSecret 表单填得再对，调 `draft` / `publish` 也会被微信以 `invalid ip, not in whitelist` 拒绝。`wechat config` 的 stdout JSON `instruction` 字段已经把"短链 + IP 白名单 + 后台路径"打包成一段话，照念即可。
+
+如果 `serverIps` 数组为空，说明服务端的 `WECHAT_SERVER_IPS` 环境变量没设——这是服务端配置缺失，AI 要提醒用户向管理员索取服务器出口 IP，再自行加白名单。
 
 ### 3.（专业版及以上可选）配置页眉页脚
 

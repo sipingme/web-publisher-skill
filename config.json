@@ -1,6 +1,6 @@
 {
   "name": "web-publisher",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "requiredEnvVars": [],
   "requires": {
     "runtime": {
@@ -11,7 +11,7 @@
   },
   "skill": {
     "name": "web-publisher",
-    "version": "0.9.2",
+    "version": "0.9.3",
     "enabled": true,
     "autoInvoke": false
   },
@@ -39,7 +39,7 @@
     "wechat-config": {
       "script": "./scripts/run.js",
       "args": ["wechat", "config"],
-      "description": "生成一次性短链，在浏览器里填写微信 AppID / AppSecret"
+      "description": "生成一次性短链，在浏览器里填写微信 AppID / AppSecret。stdout JSON 同时返回 serverIps 数组（服务器出口 IP 列表）；AI 必须把 url 和 serverIps 一并转达给用户——后者要求用户登录 mp.weixin.qq.com → 设置与开发 → 基本配置 → IP 白名单 加入。漏掉 IP 白名单会让发布时被微信以 invalid IP 拒绝，所以两份信息缺一不可。instruction 字段已经把这两件事打包成一段话。"
     },
     "wechat-status": {
       "script": "./scripts/run.js",

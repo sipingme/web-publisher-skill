@@ -912,14 +912,26 @@ async function runWechatConfig() {
   process.stderr.write(`  ${link}\n`);
   process.stderr.write(`  有效期: ${Math.round((data.expiresInSec || 600) / 60)} 分钟\n`);
   if (serverIps.length > 0) {
-    process.stderr.write('\n请把以下 IP 添加到微信公众平台 IP 白名单：\n');
-    for (const ip of serverIps) process.stderr.write(`  ${ip}\n`);
+    process.stderr.write('\n⚠️  填写表单的同时，请到微信公众平台后台把以下服务器 IP\n');
+    process.stderr.write('    加入"IP 白名单"，否则发布文章时微信会以"invalid IP"拒绝：\n');
+    for (const ip of serverIps) process.stderr.write(`      ${ip}\n`);
+    process.stderr.write('    入口：mp.weixin.qq.com → 设置与开发 → 基本配置 → IP 白名单\n');
+  } else {
+    process.stderr.write('\n[warn] 服务端未返回服务器 IP 列表（WECHAT_SERVER_IPS 可能没在 prod .env 里设置）；\n');
+    process.stderr.write('       请提醒用户向管理员确认服务器出口 IP，并自行加入微信公众平台 IP 白名单。\n');
   }
+
+  // 把 IP 白名单的指令烤进 instruction 字段：单纯依靠 stdout 的 serverIps[] 字段
+  // AI 容易当成可选信息忽略；明确写在 instruction 里 AI 才会一并转达。
+  const ipBlock = serverIps.length > 0
+    ? `\n\n同时，请明确告诉用户：填表单的同时必须到微信公众平台后台 (mp.weixin.qq.com → 设置与开发 → 基本配置 → IP 白名单) 把以下 IP 加入白名单，否则文章发布时微信会以 "invalid IP" 拒绝调用：${serverIps.map(ip => `\n  - ${ip}`).join('')}`
+    : `\n\n注意：服务端未返回服务器 IP 列表，请提醒用户向管理员获取服务器出口 IP，并自行加入微信公众平台 IP 白名单（mp.weixin.qq.com → 设置与开发 → 基本配置 → IP 白名单），否则发布会失败。`;
+
   console.log(JSON.stringify({
     success: true,
     url: link,
-    instruction: `[AI必读] 你必须把下面这个完整 URL 原文粘贴给用户，不要改写、不要只输出 Markdown 超链接文字、不要用"点击此处"替代。用户需要在浏览器中打开这个 URL 填写 AppID/AppSecret。URL：${link}`,
-    serverIps
+    serverIps,
+    instruction: `[AI必读] 两件事都必须做完，缺一不可：（1）把下面这个完整 URL 原文粘贴给用户，不要改写、不要只输出 Markdown 超链接文字、不要用"点击此处"替代。用户需要在浏览器中打开这个 URL 填写 AppID/AppSecret。URL：${link}${ipBlock}`
   }, null, 2));
 }
 
