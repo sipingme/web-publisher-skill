@@ -457,10 +457,38 @@ async function runLogin() {
 
   const intervalMs = Math.max(1000, (pollIntervalSec || 2) * 1000);
   const deadline = Date.now() + expiresInSec * 1000;
+  // Be resilient to transient network errors: a single fetch rejection (DNS
+  // hiccup, connection reset, TLS retry, etc.) used to kill the whole CLI
+  // because the loop bubbled the throw up to the top-level try/catch in
+  // main(). That left bound device codes orphaned (status='bound' but
+  // consumed_at=NULL) — the web page would say "绑定成功" but the CLI was
+  // already dead. Catch and treat as transient; only surface after several
+  // consecutive failures so a hard outage still terminates eventually.
+  let consecutiveErrors = 0;
+  const MAX_CONSECUTIVE_ERRORS = 10;
 
   while (Date.now() < deadline) {
     await new Promise(r => setTimeout(r, intervalMs));
-    const pollResp = await callJson('POST', `${toolsUrl}/skill/device/poll`, {}, { deviceCode });
+    let pollResp;
+    try {
+      pollResp = await callJson('POST', `${toolsUrl}/skill/device/poll`, {}, { deviceCode });
+    } catch (err) {
+      consecutiveErrors += 1;
+      if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+        console.error(JSON.stringify({
+          success: false,
+          error: `网络异常，连续 ${MAX_CONSECUTIVE_ERRORS} 次轮询失败：${err.message || String(err)}`
+        }));
+        process.exit(1);
+      }
+      // Transient — keep polling silently. Surface a hint at the first
+      // failure so the user knows the CLI is still alive and retrying.
+      if (consecutiveErrors === 1) {
+        process.stderr.write(`[warn] 轮询遇到网络错误，继续重试中…（${err.message || err}）\n`);
+      }
+      continue;
+    }
+    consecutiveErrors = 0;
     if (pollResp.res.status === 410) {
       console.error(JSON.stringify({
         success: false,
@@ -475,20 +503,51 @@ async function runLogin() {
     if (pollResp.data?.status === 'pending') continue;
     if (pollResp.data?.status === 'bound') {
       const creds = pollResp.data;
-      writeCredentialsFile({
-        userId: creds.userId,
-        apiKey: creds.apiKey,
-        apiUrl: creds.apiUrl || '',
-        toolsUrl: creds.toolsUrl || toolsUrl,
-        boundAt: new Date().toISOString()
-      });
+      // Persistence failure used to silently drop the freshly-issued apiKey:
+      // the server has already marked the device code 'consumed' and saved
+      // an api_key on the user row, so a thrown writeFileSync would bubble
+      // up to main()'s top-level catch and the only thing the user saw was
+      // a generic error — credentials irrecoverable until they re-bind.
+      // Now we degrade gracefully: tell the user how to keep the session
+      // alive via WEB_PUBLISHER_* env vars, and clearly print exactly which
+      // path failed so they can fix the underlying permission issue.
+      let persisted = false;
+      let persistError = null;
+      try {
+        writeCredentialsFile({
+          userId: creds.userId,
+          apiKey: creds.apiKey,
+          apiUrl: creds.apiUrl || '',
+          toolsUrl: creds.toolsUrl || toolsUrl,
+          boundAt: new Date().toISOString()
+        });
+        persisted = true;
+      } catch (err) {
+        persistError = err;
+      }
+
       process.stderr.write(`\n登录成功：${creds.name || creds.userId}\n`);
-      process.stderr.write(`凭证已保存到 ${CREDENTIALS_PATH} (mode 0600)\n`);
+      if (persisted) {
+        process.stderr.write(`凭证已保存到 ${CREDENTIALS_PATH} (mode 0600)\n`);
+      } else {
+        process.stderr.write(`[error] 写入凭证失败：${persistError?.message || persistError}\n`);
+        process.stderr.write(`        路径：${CREDENTIALS_PATH}\n`);
+        process.stderr.write('        本次会话仍可通过环境变量临时使用（注意：apiKey 已发放，下次登录会复用同一把 key）：\n');
+        process.stderr.write(`          export WEB_PUBLISHER_USER_ID='${creds.userId}'\n`);
+        process.stderr.write(`          export WEB_PUBLISHER_API_KEY='${creds.apiKey}'\n`);
+        if (creds.apiUrl) {
+          process.stderr.write(`          export WEB_PUBLISHER_API_URL='${creds.apiUrl}'\n`);
+        }
+        process.stderr.write('        修好磁盘问题后再次运行 web-publisher login 可写入正常凭证文件。\n');
+      }
+
       console.log(JSON.stringify({
         success: true,
         userId: creds.userId,
         apiKey: maskApiKey(creds.apiKey),
-        name: creds.name || null
+        name: creds.name || null,
+        persisted,
+        persistError: persistError ? String(persistError.message || persistError) : null
       }, null, 2));
       return;
     }
