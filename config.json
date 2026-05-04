@@ -1,6 +1,6 @@
 {
   "name": "web-publisher",
-  "version": "0.8.2",
+  "version": "0.9.0",
   "requiredEnvVars": [],
   "requires": {
     "runtime": {
@@ -11,7 +11,7 @@
   },
   "skill": {
     "name": "web-publisher",
-    "version": "0.8.2",
+    "version": "0.9.0",
     "enabled": true,
     "autoInvoke": false
   },
@@ -19,12 +19,12 @@
     "login": {
       "script": "./scripts/run.js",
       "args": ["login"],
-      "description": "[fire-and-forget] 拿到一次性授权链接后立即返回 (~1s)；轮询和写凭证在后台 detached 进程里完成。AI agent 拿到 verifyUrl 后请把链接原文交给用户，并提示用户在浏览器点击确认；之后通过 `web-publisher login-status`（或 `whoami`）来验证是否已绑定，不要再 await 这条 login 命令本身。可加 --force 强制重新绑定。"
+      "description": "[checkpoint, fire-and-forget] 生成一次性授权链接后 ~0.3s 返回；把 deviceCode 写到 ~/.web-publisher/login-pending.json 等待用户在浏览器点击确认。AI agent 必须把 stdout JSON 的 verifyUrl 完整原文交给用户，并提示用户在浏览器点击\"确认绑定\"；之后调用 `web-publisher login-status` 完成实际的凭证拉取，**不要 await login 命令本身**。可加 --force 强制重新绑定（覆盖已存在的 pending checkpoint）。整条流程不调用 child_process / spawn，无后台进程。"
     },
     "login-status": {
       "script": "./scripts/run.js",
       "args": ["login-status"],
-      "description": "查询登录状态：not-logged-in / polling（后台轮询中，让用户去浏览器点确认） / logged-in / invalid-credentials / stale-poller。是 login 后验证是否绑定成功的首选命令；JSON 里附带最近 5 行 ~/.web-publisher/login.log 便于排错。"
+      "description": "完成登录的第二步：读取 pending checkpoint -> 一次性 POST /skill/device/poll -> bound 时把凭证写到 credentials.json 并删除 checkpoint。也用于检查当前状态：not-logged-in / awaiting-browser-confirm（用户还没点确认） / logged-in / expired-pending（device-code 过期，请重新 login） / invalid-credentials（apiKey 失效，请 login --force） / polling-failed（网络/服务端错，可重试本命令） / persist-failed（服务端绑定成功但本地写盘失败）。Exit code 0 表示 logged-in 或 awaiting-browser-confirm，其他状态 exit 1。"
     },
     "logout": {
       "script": "./scripts/run.js",
@@ -105,7 +105,7 @@
     "type": "config-only",
     "autoInstall": true,
     "riskLevel": "low",
-    "riskReason": "此 Skill 仅通过 HTTP API 调用远程服务，不安装任何第三方包，不调用任何外部二进制；唯一的子进程调用是 `web-publisher login` 用 spawn 重新启动同一个 Node 二进制 + 同一个 run.js 作为 detached 后台轮询进程（详见 capabilities.sensitive.subprocess-spawn-self），无 shell 解析、argv 受控。凭证存储在 ~/.web-publisher/credentials.json (mode 0600)。draft / publish / convert 接受本地文件路径时，CLI 只读 basename + 文件字节并 multipart 上传到服务端，不带绝对路径。",
+    "riskReason": "此 Skill 仅通过 HTTP API 调用远程服务，不安装任何第三方包，不调用任何外部二进制，不使用 child_process / 不 spawn 任何子进程。凭证存储在 ~/.web-publisher/credentials.json (mode 0600)；登录过程的临时 device-code 存在 ~/.web-publisher/login-pending.json (mode 0600)。draft / publish / convert 接受本地文件路径时，CLI 只读 basename + 文件字节并 multipart 上传到服务端，不带绝对路径。",
     "requiresApproval": false
   },
   "dependencies": {
@@ -132,15 +132,13 @@
     "filesystem": {
       "read": [
         "~/.web-publisher/credentials.json",
-        "~/.web-publisher/login.pid",
-        "~/.web-publisher/login.log",
+        "~/.web-publisher/login-pending.json",
         "<user-supplied input file passed to draft|publish|convert>",
         "<user-supplied --out path written by convert>"
       ],
       "write": [
         "~/.web-publisher/credentials.json",
-        "~/.web-publisher/login.pid",
-        "~/.web-publisher/login.log",
+        "~/.web-publisher/login-pending.json",
         "<user-supplied --out path passed to convert>"
       ]
     },
@@ -152,15 +150,8 @@
       "note": "Calls tools.siping.me for account onboarding and the user-configured pipeline API for publishing / converting. Local files supplied to draft|publish|convert are streamed via multipart to the pipeline API; the agent does not read arbitrary files outside what the user explicitly passes."
     },
     "subprocess": {
-      "spawn": [
-        {
-          "callSite": "scripts/lib/login-daemon.js (the only file in the package that requires child_process)",
-          "executable": "<process.execPath>",
-          "args": ["<scripts/run.js path>", "__login-daemon", "--device-code <opaque>", "--expires-in <int>", "--poll-interval <int>", "--tools-url <url>"],
-          "shell": false,
-          "purpose": "Re-launch this same script as a detached background poller for `web-publisher login`, so the foreground command can return in ~1s instead of blocking on the 5-minute device-code polling loop. Argv is fixed; the four variable values come from our own /skill/device/init response. No other subprocess execution exists in the package."
-        }
-      ]
+      "spawn": [],
+      "note": "0.9.0 retired the 0.8.x background login daemon. The CLI no longer requires child_process anywhere; login is a checkpoint-file flow (login writes ~/.web-publisher/login-pending.json then exits; login-status reads the checkpoint and does a single HTTP poll)."
     }
   },
   "capabilities": {
@@ -180,22 +171,6 @@
           "Wrapper 内容由用户在浏览器表单提交，避免敏感联系方式（二维码、微信号）落入对话上下文",
           "logout 命令可远端撤销 apiKey 并清理本地文件",
           "所有操作可在 tools.siping.me 审计"
-        ]
-      },
-      {
-        "type": "subprocess-spawn-self",
-        "riskLevel": "low",
-        "description": "`web-publisher login` 用 child_process.spawn 把自己（同一个 Node 二进制 + 同一个 run.js）以 `__login-daemon` 内部子命令重新启动一次，作为 detached 后台轮询进程。0.7.x 之前 login 在前台跑 5 分钟轮询，被 IDE / agent shell tool 包起来时 wrapper 经常会丢掉成功输出；0.8.0 拆出来后前台 ~1s 退出。",
-        "risks": [
-          "如果 spawn 的 argv / 环境被攻击者污染，可能导致任意命令执行或权限提升"
-        ],
-        "mitigations": [
-          "shell:false（spawn 默认值，从未 override），子进程不经过 shell 解析",
-          "argv[0] = process.execPath，argv[1] = __filename；二者均不可由网络/用户控制",
-          "其余 argv 仅有四项（deviceCode / expiresInSec / pollIntervalSec / toolsUrl）来自我们自己的 POST /skill/device/init 响应；deviceCode 是 CSPRNG 不透明 token，整数项 String() 化，URL 项写入 PID 文件可审计",
-          "子进程接收的环境是 allow-list（PATH/HOME/USERPROFILE/WEB_PUBLISHER_TOOLS_URL），父进程可能存在的 WEB_PUBLISHER_API_KEY 等凭证不会传入",
-          "stdio:'ignore' 切断与父进程的输入输出通道",
-          "全包仅此一处调用 child_process，且被隔离到独立模块 scripts/lib/login-daemon.js（详见该文件头部 docblock）；scripts/run.js 不 require child_process、不调 spawn"
         ]
       }
     ]

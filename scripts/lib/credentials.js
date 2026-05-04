@@ -23,21 +23,26 @@ const DEFAULT_TOOLS_URL = 'https://tools.siping.me/api';
 const CREDENTIALS_DIR = path.join(os.homedir(), '.web-publisher');
 const CREDENTIALS_PATH = path.join(CREDENTIALS_DIR, 'credentials.json');
 
-// Background-poller artifacts. Both live next to credentials.json and are
-// 0600 so only the current user can read them.
+// Login checkpoint file (0.9.x model — replaced the 0.8.x background poller
+// artifacts). Lives next to credentials.json, mode 0600 so only the current
+// user can read it.
 //
-// LOGIN_PID_PATH:
-//   JSON describing the most recently spawned `__login-daemon` child:
-//   { pid, deviceCode, startedAt }. We use this to (a) detect "another
-//   login is already polling" and kill the stale daemon, (b) let
-//   `login-status` report whether a poller is alive, (c) clean up after
-//   ourselves on success.
-// LOGIN_LOG_PATH:
-//   Append-only event log (heartbeat per poll, bound/timeout/error). Both
-//   the daemon and the parent CLI append to this so users have a single
-//   place to look when "login appears to have done nothing".
-const LOGIN_PID_PATH = path.join(CREDENTIALS_DIR, 'login.pid');
-const LOGIN_LOG_PATH = path.join(CREDENTIALS_DIR, 'login.log');
+// Contents:
+//   { deviceCode, expiresAt (ms), userCode, toolsUrl, startedAt (ISO) }
+//
+// Lifecycle:
+//   - `web-publisher login` POSTs /skill/device/init, persists the result
+//     here, prints the verifyUrl, and exits — no background process.
+//   - `web-publisher login-status` reads it, performs ONE call to
+//     /skill/device/poll, and writes credentials.json + deletes this file
+//     when the server returns status='bound'.
+//   - If the user never finishes the flow, this file expires naturally
+//     (login-status notices Date.now() > expiresAt and removes it).
+//
+// We dropped the previous design's PID file and append-only log entirely:
+// they were both there to coordinate a detached background poller, which
+// no longer exists.
+const LOGIN_PENDING_PATH = path.join(CREDENTIALS_DIR, 'login-pending.json');
 
 function readCredentialsFile() {
   try {
@@ -77,59 +82,35 @@ function deleteCredentialsFile() {
   }
 }
 
-// ---- background-poller (login daemon) helpers -----------------------------
+// ---- login pending checkpoint helpers -------------------------------------
 
 function ensureCredentialsDir() {
   fs.mkdirSync(CREDENTIALS_DIR, { recursive: true, mode: 0o700 });
   try { fs.chmodSync(CREDENTIALS_DIR, 0o700); } catch (_) {}
 }
 
-function appendLoginLog(line) {
-  // Best-effort. The daemon has stdio:'ignore', so a thrown append here is
-  // its only way to "lose" a message — but there's nowhere we could surface
-  // a logging-failure error to anyway, hence the silent swallow.
+function readLoginPending() {
   try {
-    ensureCredentialsDir();
-    fs.appendFileSync(LOGIN_LOG_PATH, `[${new Date().toISOString()}] ${line}\n`, { mode: 0o600 });
-    try { fs.chmodSync(LOGIN_LOG_PATH, 0o600); } catch (_) {}
-  } catch (_) {}
-}
-
-function readLoginPidFile() {
-  try {
-    if (!fs.existsSync(LOGIN_PID_PATH)) return null;
-    const raw = fs.readFileSync(LOGIN_PID_PATH, 'utf8');
+    if (!fs.existsSync(LOGIN_PENDING_PATH)) return null;
+    const raw = fs.readFileSync(LOGIN_PENDING_PATH, 'utf8');
     const data = JSON.parse(raw);
-    if (!data || typeof data.pid !== 'number') return null;
+    if (!data || typeof data.deviceCode !== 'string') return null;
     return data;
   } catch (_) {
     return null;
   }
 }
 
-function writeLoginPidFile(record) {
+function writeLoginPending(record) {
   ensureCredentialsDir();
-  fs.writeFileSync(LOGIN_PID_PATH, JSON.stringify(record, null, 2), { mode: 0o600 });
-  try { fs.chmodSync(LOGIN_PID_PATH, 0o600); } catch (_) {}
+  fs.writeFileSync(LOGIN_PENDING_PATH, JSON.stringify(record, null, 2), { mode: 0o600 });
+  try { fs.chmodSync(LOGIN_PENDING_PATH, 0o600); } catch (_) {}
 }
 
-function deleteLoginPidFile() {
+function deleteLoginPending() {
   try {
-    if (fs.existsSync(LOGIN_PID_PATH)) fs.unlinkSync(LOGIN_PID_PATH);
+    if (fs.existsSync(LOGIN_PENDING_PATH)) fs.unlinkSync(LOGIN_PENDING_PATH);
   } catch (_) {}
-}
-
-// True iff a process with `pid` is alive AND we own it (kill(pid, 0) returns
-// without throwing). False on ESRCH (no such process) or EPERM (someone
-// else's pid recycled into our slot — treat as "not our daemon").
-function isProcessAlive(pid) {
-  if (!pid || typeof pid !== 'number') return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (_) {
-    return false;
-  }
 }
 
 function resolveToolsUrl() {
@@ -189,8 +170,7 @@ function hasEnvLogin() {
 module.exports = {
   CREDENTIALS_PATH,
   CREDENTIALS_DIR,
-  LOGIN_PID_PATH,
-  LOGIN_LOG_PATH,
+  LOGIN_PENDING_PATH,
   DEFAULT_TOOLS_URL,
   resolveToolsUrl,
   readCredentialsFile,
@@ -200,9 +180,7 @@ module.exports = {
   maskApiKey,
   hasEnvLogin,
   ensureCredentialsDir,
-  appendLoginLog,
-  readLoginPidFile,
-  writeLoginPidFile,
-  deleteLoginPidFile,
-  isProcessAlive
+  readLoginPending,
+  writeLoginPending,
+  deleteLoginPending
 };
