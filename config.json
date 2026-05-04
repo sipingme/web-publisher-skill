@@ -1,6 +1,6 @@
 {
   "name": "web-publisher",
-  "version": "0.7.5",
+  "version": "0.8.0",
   "requiredEnvVars": [],
   "requires": {
     "runtime": {
@@ -11,7 +11,7 @@
   },
   "skill": {
     "name": "web-publisher",
-    "version": "0.7.5",
+    "version": "0.8.0",
     "enabled": true,
     "autoInvoke": false
   },
@@ -19,7 +19,12 @@
     "login": {
       "script": "./scripts/run.js",
       "args": ["login"],
-      "description": "通过浏览器一次性绑定账号，凭证写入 ~/.web-publisher/credentials.json"
+      "description": "[fire-and-forget] 拿到一次性授权链接后立即返回 (~1s)；轮询和写凭证在后台 detached 进程里完成。AI agent 拿到 verifyUrl 后请把链接原文交给用户，并提示用户在浏览器点击确认；之后通过 `web-publisher login-status`（或 `whoami`）来验证是否已绑定，不要再 await 这条 login 命令本身。可加 --force 强制重新绑定。"
+    },
+    "login-status": {
+      "script": "./scripts/run.js",
+      "args": ["login-status"],
+      "description": "查询登录状态：not-logged-in / polling（后台轮询中，让用户去浏览器点确认） / logged-in / invalid-credentials / stale-poller。是 login 后验证是否绑定成功的首选命令；JSON 里附带最近 5 行 ~/.web-publisher/login.log 便于排错。"
     },
     "logout": {
       "script": "./scripts/run.js",
@@ -127,11 +132,15 @@
     "filesystem": {
       "read": [
         "~/.web-publisher/credentials.json",
+        "~/.web-publisher/login.pid",
+        "~/.web-publisher/login.log",
         "<user-supplied input file passed to draft|publish|convert>",
         "<user-supplied --out path written by convert>"
       ],
       "write": [
         "~/.web-publisher/credentials.json",
+        "~/.web-publisher/login.pid",
+        "~/.web-publisher/login.log",
         "<user-supplied --out path passed to convert>"
       ]
     },

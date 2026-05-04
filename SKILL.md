@@ -1,6 +1,6 @@
 ---
 name: web-publisher
-version: 0.7.5
+version: 0.8.0
 description: 输入文章 URL **或本地文档（PDF/DOCX/PPTX/XLSX/EPUB/图片/音频/...）**，自动提取正文、可选 AI 改写、并发布到微信公众号；也可只把任意文档转成 Markdown 文本（不发布）。抓取 / 转换 / 改写 / 发布都在服务端 (tools.siping.me) 完成，CLI 不装任何 npm 依赖；登录、公众号配置全部通过对话 + 一次性浏览器跳转完成。⚠️ 服务端走云端固定 IP，**对小红书、部分知乎专栏、登录墙文章、海外站点经常被反爬挡掉**——此时由 AI Agent（Hermes / Cursor / OpenClaw 等）改调用**用户本地安装的 `news-to-markdown-skill`** 把 URL 抓成 Markdown，然后人工复核 / 归档。也可配合 `browser-web-search` 先搜索拿到 URL 再批量发布。
 author: Ping Si <sipingme@gmail.com>
 tags: [publish, wechat, article, content, onboarding, pdf, docx, markitdown]
@@ -16,7 +16,8 @@ tags: [publish, wechat, article, content, onboarding, pdf, docx, markitdown]
 
 | 用户说什么 | 调用 | 然后做什么 |
 |---|---|---|
-| 帮我登录 / 注册 / 绑定账号 | `scripts/run.js login` | 把 CLI 输出的浏览器链接和绑定码**原文**交给用户；CLI 自己轮询并保存凭证，**不要自己重试** |
+| 帮我登录 / 注册 / 绑定账号 | `scripts/run.js login` | **fire-and-forget**：命令 ~1s 内返回，把 stdout JSON 里的 `verifyUrl` **原文**交给用户。然后让用户去浏览器点确认。**不要 await login**——它已经退出了；轮询和写凭证在后台。用户回来说"点完了"后调 `scripts/run.js login-status` 验证 |
+| 检查登录是否完成 / 我登上没 | `scripts/run.js login-status` | 看 stdout JSON 的 `state`：`logged-in` = 成功；`polling` = 后台还在等浏览器确认（隔几秒再看一次）；`not-logged-in` = 没启动过 login；`stale-poller` = 后台进程崩了，让用户重跑 `login`；`invalid-credentials` = apiKey 失效，建议 `login --force` |
 | 配置/绑定公众号 / 配 AppID | `scripts/run.js wechat config` | 读取 stdout JSON 里的 `url` 字段，把该完整 URL **原文粘贴**给用户（不包装 Markdown 链接、不用"点击此处"替代），并附上 IP 白名单列表 |
 | 我现在是谁 / 看看账号 / 余额 | `scripts/run.js whoami` | 报告账号、apiKey 脱敏摘要、微信配置状态 |
 | 公众号配好了吗 | `scripts/run.js wechat status` | 报告 `configured` 与当前 AppID |
@@ -32,6 +33,66 @@ tags: [publish, wechat, article, content, onboarding, pdf, docx, markitdown]
 | 改写后存草稿 / 发布 | `... draft <input> --rewrite [--style casual]` | `<input>` 同样可以是 URL 或文件路径 |
 | 把这个文档转成 markdown / 提取这个 PDF 的文字 | `scripts/run.js convert <input>` | 默认同步返回 `markdown / byteLength / durationMs`；想保存成文件加 `--out path.md`；大文件 / 学术 PDF 加 `--async`，CLI 自动轮询 |
 | 上次那个任务完成了吗 | `scripts/run.js status <jobId>` | 转告 status / progress / result |
+
+### 登录流程（AI 必看，0.8.0 改成 fire-and-forget 了）
+
+旧版 (0.7.x) 的 `login` 会在前台阻塞最长 5 分钟轮询服务端。被 IDE / agent shell 工具 (Cursor / Claude / OpenClaw 等) 包起来运行时，wrapper 经常会把"几分钟没刷新输出的命令"标成已完成 / 转后台，导致明明凭证已经写到磁盘了，但对话里看不到任何成功提示——用户和 agent 都以为失败。
+
+0.8.0 把流程拆成两步，AI 必须按下面这套来：
+
+1. **第一步：拿链接 → 把链接交给用户。**
+
+   ```bash
+   scripts/run.js login   # 几百毫秒内返回，stdout 是 JSON
+   ```
+
+   stdout 形如：
+
+   ```json
+   {
+     "success": true,
+     "backgroundPolling": true,
+     "pollerPid": 12345,
+     "verifyUrl": "https://tools.siping.me/skill/bind?code=ABCD-1234",
+     "userCode": "ABCD-1234",
+     "expiresInSec": 300,
+     "credentialsPath": "/Users/.../.web-publisher/credentials.json",
+     "logPath": "/Users/.../.web-publisher/login.log",
+     "instruction": "[AI必读] ..."
+   }
+   ```
+
+   AI 必须做的事：
+
+   - 把 `verifyUrl` **完整 URL 原文**贴给用户（同 `wechat config` 规则：不要包成 Markdown 链接、不要"点击此处"），并附上 `userCode`。
+   - 告诉用户："点完确认后回来跟我说一声，我会帮你验证"。
+   - **绝对不要再 await `login` 命令**——它已经退出。后台的 detached 子进程（pid = `pollerPid`）会持续轮询 `expiresInSec` 秒，把凭证写到 `credentialsPath`，并在 `logPath` 留心跳。
+
+2. **第二步：用户回来说"点完了" → 验证。**
+
+   ```bash
+   scripts/run.js login-status   # 也是 1s 内返回
+   ```
+
+   读 stdout JSON 的 `state` 字段决定下一步：
+
+   | state | 含义 | AI 该做什么 |
+   |---|---|---|
+   | `logged-in` | 成功，凭证已写、whoami 通过 | 报"绑定成功，账号 = `<name>`"，可以直接用 `whoami` / `wechat status` 等命令 |
+   | `polling` | 后台还在轮询，用户可能还没点 | 提醒用户去浏览器确认；隔 3-5 秒后**最多再调一次** `login-status`；连续 2 次都还是 polling 就让用户检查浏览器 |
+   | `not-logged-in` | 既没凭证也没后台进程 | 让用户重跑 `login` |
+   | `stale-poller` | PID 文件残留但进程已死 | 后台进程崩了；让用户重跑 `login`，并把 stdout JSON 里 `recentLog` 字段的最后几行回报给用户做诊断 |
+   | `invalid-credentials` | 本地有凭证但服务端拒绝（apiKey 失效） | 让用户跑 `scripts/run.js login --force` 重新绑定 |
+   | `logged-in-unverified` | 有凭证但 whoami 网络不通 | 当作已登录但提示"网络不稳，未做服务端校验" |
+
+3. **不要做的事：**
+
+   - ❌ 不要在 `login` 之后立刻无限循环 `login-status`。`polling` 状态正常会持续到用户去浏览器点确认；让用户主动告诉你"我点完了"再去查。
+   - ❌ 不要因为 `login` 返回了就以为绑定完成——`backgroundPolling: true` 表示**轮询还在后台**，必须等 `login-status` 返回 `logged-in` 才算成功。
+   - ❌ 不要用 `--force` 当默认行为；只有 `invalid-credentials` 或用户明确说"切换账号 / 重新绑定"才用。
+   - ❌ 不要直接读 `~/.web-publisher/credentials.json` 试图判断有没有登录——文件存在不代表 apiKey 还有效。永远走 `login-status`。
+
+4. **诊断**：所有后台轮询事件都写在 `~/.web-publisher/login.log`（每行带 ISO 时间戳，包含 `poll #N: pending` 心跳和 `result=ok|timeout|expired-or-consumed|write-error|network-failure` 终态）。`login-status` 会自动把最后 5 行附在 stdout JSON 的 `recentLog` 字段里。
 
 ### 关键约束（必须遵守）
 
@@ -54,7 +115,7 @@ tags: [publish, wechat, article, content, onboarding, pdf, docx, markitdown]
 
    | CLI 错误 | 正确处置 |
    |---|---|
-   | `尚未登录` | 提示用户跑 `scripts/run.js login` |
+   | `尚未登录` | 提示用户跑 `scripts/run.js login`；等用户在浏览器点完确认后再调 `scripts/run.js login-status` 验证 |
    | `WeChat credentials not configured` | 提示用户跑 `scripts/run.js wechat config`（仅 draft/publish 需要；`convert` 不需要微信配置） |
    | `发布额度不足 / 余额不足 / insufficient credits` | 提示用户去 [tools.siping.me](https://tools.siping.me) 充值 |
    | `input is not a URL and no file exists at: ...` | 用户给的路径不存在 / 拼错；让用户重确认本地路径 |
@@ -140,18 +201,33 @@ node <path-to>/news-to-markdown-skill/scripts/run.js convert \
 
 > AI Agent 注意：`news-to-markdown-skill` 一定要装在 **用户本机**，不能在云端环境里跑——否则就跟 web-publisher 服务端一样被反爬挡。Hermes 之类的本地 Agent 会直接拿到用户家庭 / 办公出口 IP，是这条回退路径的关键。
 
-### 1. 首次登录
+### 1. 首次登录（0.8.0 fire-and-forget 流程）
 
-用户说「帮我登录」→ AI 调 `scripts/run.js login` → CLI 打印一次性短链：
+用户说「帮我登录」→ AI 调 `scripts/run.js login` → 命令 ~1s 内退出，stderr 类似：
 
 ```
 请在浏览器中打开以下链接，确认绑定到你的账号：
   https://tools.siping.me/skill/bind?code=ABCD-EFGH
-  绑定码: ABCD-EFGH
-  有效期: 5 分钟
+  绑定码：ABCD-EFGH
+  有效期：5 分钟
+
+后台轮询已启动 (pid 12345)，浏览器确认后凭证会自动写入：
+  /Users/.../.web-publisher/credentials.json
+  日志：/Users/.../.web-publisher/login.log
+
+确认绑定后请运行：web-publisher login-status   验证登录是否完成
+                 或：web-publisher whoami         直接看账号信息
 ```
 
-用户在浏览器完成注册/登录 + 点「确认绑定」。CLI 自动轮询，凭证写入 `~/.web-publisher/credentials.json`（mode 0600，仅当前用户可读）。
+stdout 是机器可读的 JSON（`success / verifyUrl / userCode / pollerPid / credentialsPath / logPath / instruction`）。
+
+AI 接下来要做：
+
+1. 把 stdout 里的 `verifyUrl` **完整 URL 原文**贴给用户，附上 `userCode`。
+2. 等用户回来说"点完了"。
+3. 调 `scripts/run.js login-status`，看 `state == "logged-in"` 才算成功。
+
+详细规则见上面《登录流程（AI 必看）》。**不要 await `login` 命令本身**——它已经退出，真正的轮询和写凭证在后台 detached 进程里完成。所有事件都写在 `~/.web-publisher/login.log`，`login-status` stdout 的 `recentLog` 字段会自动附最后 5 行。
 
 ### 2. 配置微信公众号
 
@@ -180,7 +256,8 @@ node <path-to>/news-to-markdown-skill/scripts/run.js convert \
 
 ```bash
 # 账号
-scripts/run.js login              # 浏览器一次性绑定
+scripts/run.js login              # fire-and-forget：拿一次性短链，~1s 退出；轮询在后台
+scripts/run.js login-status       # 查后台轮询是否已写入凭证（首选验证命令）
 scripts/run.js logout             # 撤销 apiKey + 删本地凭证
 scripts/run.js whoami             # 当前账号 + 微信配置 + 余额
 

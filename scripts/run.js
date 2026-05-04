@@ -22,13 +22,20 @@
 
 const {
   CREDENTIALS_PATH,
+  LOGIN_PID_PATH,
+  LOGIN_LOG_PATH,
   DEFAULT_TOOLS_URL,
   resolveToolsUrl,
   writeCredentialsFile,
   deleteCredentialsFile,
   loadCredentials,
   maskApiKey,
-  hasEnvLogin
+  hasEnvLogin,
+  appendLoginLog,
+  readLoginPidFile,
+  writeLoginPidFile,
+  deleteLoginPidFile,
+  isProcessAlive
 } = require('./lib/credentials');
 
 const {
@@ -44,6 +51,7 @@ const { readClassifiedFileBuffer } = require('./lib/upload');
 
 const fs = require('fs');
 const path = require('path');
+const { spawn } = require('child_process');
 
 const POLL_INTERVAL_MS = 5000;
 const MAX_POLL_ATTEMPTS = 120; // 最长等待 10 分钟，避免假超时导致 AI 重试产生重复草稿
@@ -454,9 +462,10 @@ async function runConvert(args) {
 
 async function runLogin(loginArgs) {
   if (hasEnvLogin()) {
-    process.stderr.write('[info] 检测到环境变量已配置，环境变量优先级最高，无需重新登录。\n');
-    process.stderr.write('       如需切换账号，请清空 WEB_PUBLISHER_USER_ID / WEB_PUBLISHER_API_KEY 后重试。\n');
-    return;
+    flushStderr('[info] 检测到环境变量已配置，环境变量优先级最高，无需重新登录。\n');
+    flushStderr('       如需切换账号，请清空 WEB_PUBLISHER_USER_ID / WEB_PUBLISHER_API_KEY 后重试。\n');
+    flushStdout(JSON.stringify({ success: true, alreadyLoggedIn: true, source: 'env' }, null, 2) + '\n');
+    process.exit(0);
   }
 
   const force = Array.isArray(loginArgs) && (loginArgs.includes('--force') || loginArgs.includes('-f'));
@@ -530,22 +539,225 @@ async function runLogin(loginArgs) {
   }
   const { deviceCode, userCode, verifyUrl, expiresInSec, pollIntervalSec } = initResp.data;
 
-  process.stderr.write('\n');
-  process.stderr.write('请在浏览器中打开以下链接，确认绑定到你的账号：\n');
-  process.stderr.write(`  ${verifyUrl}\n`);
-  process.stderr.write(`  绑定码: ${userCode}\n`);
-  process.stderr.write(`  有效期: ${Math.round(expiresInSec / 60)} 分钟\n`);
-  process.stderr.write('\n等待授权…（确认后会自动写入凭证）\n');
+  // ---- 关键变化：把轮询从前台扔到后台守护进程 ----
+  //
+  // 0.7.x 把 5 分钟的轮询循环跑在前台。问题：被 AI agent / IDE shell tool 包
+  // 起来运行时，绝大多数 wrapper 会把"几分钟没刷新的命令"标记为"已转后台 /
+  // 已结束"并停止把它的 stdout/stderr 渲染到对话 UI——哪怕 CLI 后续真的把
+  // "登录成功"那几行字节同步写进了 OS pipe，wrapper 也不再读、不再显示。
+  //
+  // 0.8.0 改成 fire-and-forget：
+  //   - 前台只做一件事：POST /device/init -> 拿到 verifyUrl -> 把 URL 漂亮
+  //     地打到 stderr -> stdout 输出 JSON -> exit 0。整条命令几百毫秒结束。
+  //   - 真正的轮询 + 写凭证发生在 spawn(detached, stdio:'ignore') 出去的
+  //     子进程里，它通过 ~/.web-publisher/login.log 留心跳，结果写
+  //     credentials.json + 在 login.log 里 sentinel 一行 result=ok|error。
+  //   - 验证登录是否成功的 single source of truth 变成
+  //     `web-publisher login-status` 或 `web-publisher whoami`。
+
+  killExistingLoginDaemon();
+
+  let daemonPid;
+  try {
+    daemonPid = spawnLoginDaemon({ deviceCode, expiresInSec, pollIntervalSec, toolsUrl });
+  } catch (err) {
+    flushStderr(`[warn] 后台轮询启动失败（${err.message || err}），改为前台轮询。\n`);
+    flushStderr(`       这意味着这条命令会阻塞最长 ${Math.round(expiresInSec / 60)} 分钟。\n`);
+    return runLoginForeground({ deviceCode, userCode, verifyUrl, expiresInSec, pollIntervalSec, toolsUrl });
+  }
+
+  appendLoginLog(`spawned daemon pid=${daemonPid} deviceCode=${deviceCode.slice(0, 8)}…`);
+
+  flushStderr('\n请在浏览器中打开以下链接，确认绑定到你的账号：\n');
+  flushStderr(`  ${verifyUrl}\n`);
+  flushStderr(`  绑定码：${userCode}\n`);
+  flushStderr(`  有效期：${Math.round(expiresInSec / 60)} 分钟\n`);
+  flushStderr('\n');
+  flushStderr(`后台轮询已启动 (pid ${daemonPid})，浏览器确认后凭证会自动写入：\n`);
+  flushStderr(`  ${CREDENTIALS_PATH}\n`);
+  flushStderr(`  日志：${LOGIN_LOG_PATH}\n`);
+  flushStderr('\n确认绑定后请运行：web-publisher login-status   验证登录是否完成\n');
+  flushStderr('                 或：web-publisher whoami         直接看账号信息\n');
+
+  flushStdout(JSON.stringify({
+    success: true,
+    backgroundPolling: true,
+    pollerPid: daemonPid,
+    verifyUrl,
+    userCode,
+    expiresInSec,
+    credentialsPath: CREDENTIALS_PATH,
+    logPath: LOGIN_LOG_PATH,
+    instruction: '[AI必读] 请把 verifyUrl 完整 URL 原文交给用户。用户在浏览器点击确认后，再运行 `web-publisher login-status`（首选）或 `web-publisher whoami` 来验证登录是否完成；不要再 await 这条 login 命令本身——它已经返回了。'
+  }, null, 2) + '\n');
+
+  process.exit(0);
+}
+
+// ----------------------------------------------------------------------------
+// Login background daemon
+// ----------------------------------------------------------------------------
+
+function killExistingLoginDaemon() {
+  const old = readLoginPidFile();
+  if (!old) return;
+  if (isProcessAlive(old.pid)) {
+    try {
+      process.kill(old.pid, 'SIGTERM');
+      appendLoginLog(`killed previous daemon pid=${old.pid} deviceCode=${(old.deviceCode || '').slice(0, 8)}…`);
+    } catch (_) { /* best-effort */ }
+  }
+  deleteLoginPidFile();
+}
+
+function spawnLoginDaemon({ deviceCode, expiresInSec, pollIntervalSec, toolsUrl }) {
+  const child = spawn(
+    process.execPath,
+    [
+      __filename,
+      '__login-daemon',
+      '--device-code', deviceCode,
+      '--expires-in', String(expiresInSec),
+      '--poll-interval', String(pollIntervalSec),
+      '--tools-url', toolsUrl
+    ],
+    {
+      detached: true,
+      stdio: 'ignore',
+      // 把环境清理一下：不要把可能存在的 WEB_PUBLISHER_API_KEY 等带进去，
+      // 否则 daemon 里 hasEnvLogin() / loadCredentials() 行为会偏掉。
+      env: {
+        PATH: process.env.PATH || '',
+        HOME: process.env.HOME || '',
+        USERPROFILE: process.env.USERPROFILE || '',
+        WEB_PUBLISHER_TOOLS_URL: process.env.WEB_PUBLISHER_TOOLS_URL || ''
+      }
+    }
+  );
+
+  if (!child.pid) throw new Error('spawn returned no pid');
+
+  writeLoginPidFile({
+    pid: child.pid,
+    deviceCode,
+    startedAt: new Date().toISOString()
+  });
+
+  child.unref();
+  return child.pid;
+}
+
+// daemon entry, invoked as: node run.js __login-daemon --device-code X --expires-in Y ...
+async function runLoginDaemon(daemonArgs) {
+  const opts = parseDaemonArgs(daemonArgs);
+  if (!opts.deviceCode || !opts.toolsUrl) {
+    appendLoginLog('[fatal] daemon launched with missing --device-code/--tools-url');
+    process.exit(2);
+  }
+
+  appendLoginLog(`daemon-up pid=${process.pid} deviceCode=${opts.deviceCode.slice(0, 8)}… ttl=${opts.expiresInSec}s interval=${opts.pollIntervalSec}s`);
+
+  process.on('SIGTERM', () => {
+    appendLoginLog(`daemon-terminated (SIGTERM) pid=${process.pid}`);
+    deleteLoginPidFile();
+    process.exit(0);
+  });
+
+  const intervalMs = Math.max(1000, (opts.pollIntervalSec || 2) * 1000);
+  const deadline = Date.now() + opts.expiresInSec * 1000;
+  const toolsUrl = opts.toolsUrl.replace(/\/$/, '');
+
+  let consecutiveErrors = 0;
+  const MAX_CONSECUTIVE_ERRORS = 10;
+  let pollNum = 0;
+
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, intervalMs));
+    pollNum += 1;
+
+    let pollResp;
+    try {
+      pollResp = await callJson('POST', `${toolsUrl}/skill/device/poll`, {}, { deviceCode: opts.deviceCode });
+    } catch (err) {
+      consecutiveErrors += 1;
+      appendLoginLog(`poll #${pollNum}: network error (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS}): ${err.message || err}`);
+      if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+        appendLoginLog(`[error] result=network-failure 连续 ${MAX_CONSECUTIVE_ERRORS} 次轮询失败，daemon 退出`);
+        deleteLoginPidFile();
+        process.exit(1);
+      }
+      continue;
+    }
+    consecutiveErrors = 0;
+
+    if (pollResp.res.status === 410) {
+      const reason = pollResp.data?.error || '绑定码已过期或已被使用';
+      appendLoginLog(`[error] result=expired-or-consumed poll #${pollNum}: 410 — ${reason}`);
+      deleteLoginPidFile();
+      process.exit(1);
+    }
+    if (!pollResp.res.ok) {
+      appendLoginLog(`poll #${pollNum}: HTTP ${pollResp.res.status}, retrying`);
+      continue;
+    }
+    if (pollResp.data?.status === 'pending') {
+      appendLoginLog(`poll #${pollNum}: pending`);
+      continue;
+    }
+    if (pollResp.data?.status === 'bound') {
+      const creds = pollResp.data;
+      appendLoginLog(`poll #${pollNum}: bound — userId=${creds.userId} name=${creds.name || ''}`);
+
+      try {
+        writeCredentialsFile({
+          userId: creds.userId,
+          apiKey: creds.apiKey,
+          apiUrl: creds.apiUrl || '',
+          toolsUrl: creds.toolsUrl || toolsUrl,
+          boundAt: new Date().toISOString()
+        });
+        appendLoginLog(`credentials-written path=${CREDENTIALS_PATH}`);
+        appendLoginLog(`result=ok userId=${creds.userId}`);
+      } catch (err) {
+        appendLoginLog(`[error] writeCredentialsFile failed: ${err.message || err}`);
+        appendLoginLog(`result=write-error userId=${creds.userId} apiKey=${maskApiKey(creds.apiKey)}`);
+        deleteLoginPidFile();
+        process.exit(1);
+      }
+
+      deleteLoginPidFile();
+      process.exit(0);
+    }
+
+    appendLoginLog(`poll #${pollNum}: unknown status "${pollResp.data?.status}", retrying`);
+  }
+
+  appendLoginLog(`[error] result=timeout 绑定窗口 (${opts.expiresInSec}s) 已过，请重新运行 web-publisher login`);
+  deleteLoginPidFile();
+  process.exit(1);
+}
+
+function parseDaemonArgs(argv) {
+  const opts = { deviceCode: '', expiresInSec: 300, pollIntervalSec: 2, toolsUrl: '' };
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--device-code' && argv[i + 1]) opts.deviceCode = argv[++i];
+    else if (argv[i] === '--expires-in' && argv[i + 1]) opts.expiresInSec = Number(argv[++i]) || 300;
+    else if (argv[i] === '--poll-interval' && argv[i + 1]) opts.pollIntervalSec = Number(argv[++i]) || 2;
+    else if (argv[i] === '--tools-url' && argv[i + 1]) opts.toolsUrl = argv[++i];
+  }
+  return opts;
+}
+
+// 后台 spawn 失败时的兜底：直接在前台跑同一份轮询逻辑，跟 0.7.x 行为一致。
+async function runLoginForeground({ deviceCode, userCode, verifyUrl, expiresInSec, pollIntervalSec, toolsUrl }) {
+  flushStderr('\n请在浏览器中打开以下链接，确认绑定到你的账号：\n');
+  flushStderr(`  ${verifyUrl}\n`);
+  flushStderr(`  绑定码：${userCode}\n`);
+  flushStderr(`  有效期：${Math.round(expiresInSec / 60)} 分钟\n`);
+  flushStderr('\n等待授权…（确认后会自动写入凭证）\n');
 
   const intervalMs = Math.max(1000, (pollIntervalSec || 2) * 1000);
   const deadline = Date.now() + expiresInSec * 1000;
-  // Be resilient to transient network errors: a single fetch rejection (DNS
-  // hiccup, connection reset, TLS retry, etc.) used to kill the whole CLI
-  // because the loop bubbled the throw up to the top-level try/catch in
-  // main(). That left bound device codes orphaned (status='bound' but
-  // consumed_at=NULL) — the web page would say "绑定成功" but the CLI was
-  // already dead. Catch and treat as transient; only surface after several
-  // consecutive failures so a hard outage still terminates eventually.
   let consecutiveErrors = 0;
   const MAX_CONSECUTIVE_ERRORS = 10;
 
@@ -563,10 +775,8 @@ async function runLogin(loginArgs) {
         }));
         process.exit(1);
       }
-      // Transient — keep polling silently. Surface a hint at the first
-      // failure so the user knows the CLI is still alive and retrying.
       if (consecutiveErrors === 1) {
-        process.stderr.write(`[warn] 轮询遇到网络错误，继续重试中…（${err.message || err}）\n`);
+        flushStderr(`[warn] 轮询遇到网络错误，继续重试中…（${err.message || err}）\n`);
       }
       continue;
     }
@@ -578,37 +788,12 @@ async function runLogin(loginArgs) {
       }));
       process.exit(1);
     }
-    if (!pollResp.res.ok) {
-      // Transient error, keep polling
-      continue;
-    }
+    if (!pollResp.res.ok) continue;
     if (pollResp.data?.status === 'pending') continue;
     if (pollResp.data?.status === 'bound') {
       const creds = pollResp.data;
-
-      // Print "I just got the bound response" *before* we touch the disk.
-      // Reasons:
-      //  1) Confirms to the user (or the wrapping agent) that device flow
-      //     reached its terminal state, even if the next step crashes,
-      //     gets SIGTERM-ed, or has its stdio closed by the parent.
-      //  2) Shrinks the "wrote credentials but printed nothing" window —
-      //     previously the only success markers came after writeFileSync,
-      //     so a parent that killed us between those two steps left the
-      //     user staring at a silent terminal with credentials on disk.
-      //  3) Uses the synchronous fd writer so it actually reaches the OS
-      //     pipe buffer before we move on; non-TTY stdio is async by
-      //     default and can otherwise be lost on quick exit.
       flushStderr(`\n收到绑定回执：${creds.name || creds.userId}\n`);
       flushStderr(`正在写入本地凭证：${CREDENTIALS_PATH}\n`);
-
-      // Persistence failure used to silently drop the freshly-issued apiKey:
-      // the server has already marked the device code 'consumed' and saved
-      // an api_key on the user row, so a thrown writeFileSync would bubble
-      // up to main()'s top-level catch and the only thing the user saw was
-      // a generic error — credentials irrecoverable until they re-bind.
-      // Now we degrade gracefully: tell the user how to keep the session
-      // alive via WEB_PUBLISHER_* env vars, and clearly print exactly which
-      // path failed so they can fix the underlying permission issue.
       let persisted = false;
       let persistError = null;
       try {
@@ -623,22 +808,12 @@ async function runLogin(loginArgs) {
       } catch (err) {
         persistError = err;
       }
-
       flushStderr(`登录成功：${creds.name || creds.userId}\n`);
       if (persisted) {
         flushStderr(`凭证已保存到 ${CREDENTIALS_PATH} (mode 0600)\n`);
       } else {
         flushStderr(`[error] 写入凭证失败：${persistError?.message || persistError}\n`);
-        flushStderr(`        路径：${CREDENTIALS_PATH}\n`);
-        flushStderr('        本次会话仍可通过环境变量临时使用（注意：apiKey 已发放，下次登录会复用同一把 key）：\n');
-        flushStderr(`          export WEB_PUBLISHER_USER_ID='${creds.userId}'\n`);
-        flushStderr(`          export WEB_PUBLISHER_API_KEY='${creds.apiKey}'\n`);
-        if (creds.apiUrl) {
-          flushStderr(`          export WEB_PUBLISHER_API_URL='${creds.apiUrl}'\n`);
-        }
-        flushStderr('        修好磁盘问题后再次运行 web-publisher login 可写入正常凭证文件。\n');
       }
-
       flushStdout(JSON.stringify({
         success: true,
         userId: creds.userId,
@@ -647,17 +822,99 @@ async function runLogin(loginArgs) {
         persisted,
         persistError: persistError ? String(persistError.message || persistError) : null
       }, null, 2) + '\n');
-      // Force a clean exit so the agent / wrapper sees EOF on our stdio
-      // immediately. Bare `return` would let the event loop drain by itself,
-      // which is correct but adds latency before the parent knows we're
-      // done — and during that window any buffered output in libuv can
-      // still get lost if the parent decides to detach.
       process.exit(0);
     }
   }
 
   console.error(JSON.stringify({ success: false, error: '绑定超时，请重新运行 web-publisher login' }));
   process.exit(1);
+}
+
+// ----------------------------------------------------------------------------
+// login-status
+// ----------------------------------------------------------------------------
+//
+// 设计意图：
+//   `web-publisher login` 现在 fire-and-forget，所以"我有没有登录成功"这件
+//   事不再能从 login 自身的 stdout 看出来。login-status 是 single source
+//   of truth，不依赖任何输出流是否被 wrapper 渲染：
+//     - 看 credentials.json + whoami → "logged-in"
+//     - 看 login.pid + isProcessAlive → "polling"
+//     - 两个都没有 → "not-logged-in"
+//     - PID 文件残留但 daemon 已死 → "stale-poller"
+//     - 同时附带 login.log 末尾几行作为调试信息
+async function runLoginStatus() {
+  const status = {
+    success: true,
+    state: 'unknown',
+    credentialsPath: CREDENTIALS_PATH,
+    logPath: LOGIN_LOG_PATH,
+    pidPath: LOGIN_PID_PATH
+  };
+
+  const existing = loadCredentials();
+  const pidRecord = readLoginPidFile();
+  const pidAlive = pidRecord && isProcessAlive(pidRecord.pid);
+
+  if (existing) {
+    try {
+      const { res, data } = await tools('GET', '/skill/whoami', null, existing);
+      if (res.ok) {
+        status.state = 'logged-in';
+        status.userId = data?.userId || existing.userId;
+        status.name = data?.name || null;
+        status.apiKey = maskApiKey(existing.apiKey);
+        status.source = existing.source;
+      } else if (res.status === 401 || res.status === 403) {
+        status.state = 'invalid-credentials';
+        status.userId = existing.userId;
+        status.note = '本地凭证存在但服务端拒绝（apiKey 已失效），请运行：web-publisher login --force';
+      } else {
+        status.state = 'logged-in-unverified';
+        status.userId = existing.userId;
+        status.note = `whoami 返回 HTTP ${res.status}，凭证可能仍然有效`;
+      }
+    } catch (err) {
+      status.state = 'logged-in-unverified';
+      status.userId = existing.userId;
+      status.note = `无法连接服务端校验：${err.message || err}`;
+    }
+  } else if (pidAlive) {
+    status.state = 'polling';
+    status.pollerPid = pidRecord.pid;
+    status.deviceCodePrefix = (pidRecord.deviceCode || '').slice(0, 8) + '…';
+    status.startedAt = pidRecord.startedAt;
+    status.note = '后台轮询进行中，请确认浏览器里已点击"确认绑定"，然后稍等几秒重试本命令';
+  } else if (pidRecord && !pidAlive) {
+    status.state = 'stale-poller';
+    status.staleRecord = pidRecord;
+    status.note = '后台轮询进程已不在；可能崩溃了或被 kill 了，请查看 login.log 末尾几行';
+    deleteLoginPidFile();
+  } else {
+    status.state = 'not-logged-in';
+    status.note = '没有本地凭证，也没有后台轮询，请运行：web-publisher login';
+  }
+
+  try {
+    if (fs.existsSync(LOGIN_LOG_PATH)) {
+      const raw = fs.readFileSync(LOGIN_LOG_PATH, 'utf8').trimEnd().split('\n');
+      status.recentLog = raw.slice(-5);
+    }
+  } catch (_) { /* best-effort */ }
+
+  flushStderr(`login-status: ${status.state}\n`);
+  if (status.note) flushStderr(`  ${status.note}\n`);
+  if (status.userId) flushStderr(`  userId: ${status.userId}\n`);
+  if (status.name) flushStderr(`  name:   ${status.name}\n`);
+  if (status.pollerPid) flushStderr(`  poller: pid=${status.pollerPid}, started=${status.startedAt}\n`);
+  if (status.recentLog) {
+    flushStderr('  recent log:\n');
+    for (const line of status.recentLog) flushStderr(`    ${line}\n`);
+  }
+
+  flushStdout(JSON.stringify(status, null, 2) + '\n');
+  // logged-in / polling 算成功；其他算失败（用退出码区分）。
+  process.exit(status.state === 'logged-in' || status.state === 'polling' ? 0 : 1);
 }
 
 async function runLogout() {
@@ -809,8 +1066,12 @@ function showHelp() {
 web-publisher v${PKG_VERSION} — 将网页文章 / 本地文档发布到微信公众号
 
 账号管理（首次使用）:
-  login [--force]    通过浏览器一次性绑定账号，凭证写入本地
-                     已登录时会自动跳过；--force 可强制重新绑定
+  login [--force]    通过浏览器一次性绑定账号；命令立即返回，轮询/写凭证
+                     在后台进程里完成。已登录时会自动跳过；--force 可强制
+                     重新绑定，会先 SIGTERM 掉上一个后台轮询。
+  login-status       检查当前登录状态：未登录 / 后台轮询中 / 已登录 /
+                     凭证失效；并附带最近 5 行 ~/.web-publisher/login.log
+                     这是 login 后验证是否绑定成功的首选命令。
   logout             撤销当前 apiKey 并清除本地凭证
   whoami             查看当前账号、apiKey（已脱敏）与微信配置状态
 
@@ -864,6 +1125,16 @@ const args = process.argv.slice(3);
     switch (command) {
       case 'login':
         await runLogin(args);
+        break;
+      case 'login-status':
+        await runLoginStatus();
+        break;
+      // Internal: re-entry point for the detached background poller spawned
+      // by `web-publisher login`. Not meant to be invoked by users — and
+      // therefore deliberately omitted from showHelp() and config.json's
+      // commands list.
+      case '__login-daemon':
+        await runLoginDaemon(args);
         break;
       case 'logout':
         await runLogout();
