@@ -1,6 +1,6 @@
 {
   "name": "web-publisher",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "requiredEnvVars": [],
   "requires": {
     "runtime": {
@@ -11,7 +11,7 @@
   },
   "skill": {
     "name": "web-publisher",
-    "version": "0.8.1",
+    "version": "0.8.2",
     "enabled": true,
     "autoInvoke": false
   },
@@ -105,7 +105,7 @@
     "type": "config-only",
     "autoInstall": true,
     "riskLevel": "low",
-    "riskReason": "此 Skill 仅通过 HTTP API 调用远程服务，不安装任何第三方包，不执行本地命令。凭证存储在 ~/.web-publisher/credentials.json (mode 0600)。draft / publish / convert 接受本地文件路径时，CLI 只读 basename + 文件字节并 multipart 上传到服务端，不带绝对路径。",
+    "riskReason": "此 Skill 仅通过 HTTP API 调用远程服务，不安装任何第三方包，不调用任何外部二进制；唯一的子进程调用是 `web-publisher login` 用 spawn 重新启动同一个 Node 二进制 + 同一个 run.js 作为 detached 后台轮询进程（详见 capabilities.sensitive.subprocess-spawn-self），无 shell 解析、argv 受控。凭证存储在 ~/.web-publisher/credentials.json (mode 0600)。draft / publish / convert 接受本地文件路径时，CLI 只读 basename + 文件字节并 multipart 上传到服务端，不带绝对路径。",
     "requiresApproval": false
   },
   "dependencies": {
@@ -154,6 +154,7 @@
     "subprocess": {
       "spawn": [
         {
+          "callSite": "scripts/lib/login-daemon.js (the only file in the package that requires child_process)",
           "executable": "<process.execPath>",
           "args": ["<scripts/run.js path>", "__login-daemon", "--device-code <opaque>", "--expires-in <int>", "--poll-interval <int>", "--tools-url <url>"],
           "shell": false,
@@ -194,7 +195,7 @@
           "其余 argv 仅有四项（deviceCode / expiresInSec / pollIntervalSec / toolsUrl）来自我们自己的 POST /skill/device/init 响应；deviceCode 是 CSPRNG 不透明 token，整数项 String() 化，URL 项写入 PID 文件可审计",
           "子进程接收的环境是 allow-list（PATH/HOME/USERPROFILE/WEB_PUBLISHER_TOOLS_URL），父进程可能存在的 WEB_PUBLISHER_API_KEY 等凭证不会传入",
           "stdio:'ignore' 切断与父进程的输入输出通道",
-          "全包仅此一处调用 child_process（详见 scripts/run.js 的 require('child_process') 上方注释、spawnLoginDaemon 函数前 docblock）"
+          "全包仅此一处调用 child_process，且被隔离到独立模块 scripts/lib/login-daemon.js（详见该文件头部 docblock）；scripts/run.js 不 require child_process、不调 spawn"
         ]
       }
     ]
