@@ -1,6 +1,6 @@
 ---
 name: web-publisher
-version: 0.9.1
+version: 0.9.2
 description: 输入文章 URL **或本地文档（PDF/DOCX/PPTX/XLSX/EPUB/图片/音频/...）**，自动提取正文、可选 AI 改写、并发布到微信公众号；也可只把任意文档转成 Markdown 文本（不发布）。抓取 / 转换 / 改写 / 发布都在服务端 (tools.siping.me) 完成，CLI 不装任何 npm 依赖；登录、公众号配置全部通过对话 + 一次性浏览器跳转完成。⚠️ 服务端走云端固定 IP，**对小红书、部分知乎专栏、登录墙文章、海外站点经常被反爬挡掉**——此时由 AI Agent（Hermes / Cursor / OpenClaw 等）改调用**用户本地安装的 `news-to-markdown-skill`** 把 URL 抓成 Markdown，然后人工复核 / 归档。也可配合 `browser-web-search` 先搜索拿到 URL 再批量发布。
 author: Ping Si <sipingme@gmail.com>
 tags: [publish, wechat, article, content, onboarding, pdf, docx, markitdown]
@@ -17,7 +17,7 @@ tags: [publish, wechat, article, content, onboarding, pdf, docx, markitdown]
 | 用户说什么 | 调用 | 然后做什么 |
 |---|---|---|
 | 帮我登录 / 注册 / 绑定账号 | `scripts/run.js login` | **fire-and-forget (checkpoint 模型)**：命令 ~0.3s 返回，写 `~/.web-publisher/login-pending.json` 等待用户在浏览器授权。把 stdout JSON 里的 `verifyUrl` **原文**交给用户，附上 `userCode`。**不要 await login** 它已经退出了。等用户说"点完了"再调 `scripts/run.js login-status` 把凭证拉下来 |
-| 检查登录是否完成 / 我登上没 / 完成登录第二步 | `scripts/run.js login-status` | 一次性向服务端查 device-code 状态并写凭证。`state`：`logged-in` = 已登录 **且** 公众号已配置（可以发文章了）；`logged-in-no-wechat` = 账号绑好了但公众号 AppID/AppSecret 还没填，**必须**接着喊用户跑 `wechat config`，否则 draft / publish 会失败；`awaiting-browser-confirm` = 用户还没在浏览器点确认（催用户去点，再隔几秒重试本命令）；`expired-pending` = device-code 5 分钟过期了，重跑 `login`；`invalid-credentials` = apiKey 已失效，建议 `login --force`；`polling-failed` = 网络/服务端临时错，可重试本命令；`persist-failed` = 服务端绑定成功但本地写盘失败（看 `note` 里的 fallback 环境变量）；`not-logged-in` = 没启动过 login |
+| 检查登录是否完成 / 我登上没 / 完成登录第二步 | `scripts/run.js login-status` | 一次性向服务端查 device-code 状态并写凭证。`state`：`logged-in` = 已登录 **且** 公众号已配置（可以发文章了）；`logged-in-no-wechat` = 账号绑好了但公众号 AppID/AppSecret 还没填齐，**AI 必须自己接着调用 `wechat config`**（不要把命令贴给用户让他敲）然后只把生成的 URL 原文给用户，否则 draft / publish 会失败；`awaiting-browser-confirm` = 用户还没在浏览器点确认（催用户去点，再隔几秒重试本命令）；`expired-pending` = device-code 5 分钟过期了，重跑 `login`；`invalid-credentials` = apiKey 已失效，建议 `login --force`；`polling-failed` = 网络/服务端临时错，可重试本命令；`persist-failed` = 服务端绑定成功但本地写盘失败（看 `note` 里的 fallback 环境变量）；`not-logged-in` = 没启动过 login |
 | 配置/绑定公众号 / 配 AppID | `scripts/run.js wechat config` | 读取 stdout JSON 里的 `url` 字段，把该完整 URL **原文粘贴**给用户（不包装 Markdown 链接、不用"点击此处"替代），并附上 IP 白名单列表 |
 | 我现在是谁 / 看看账号 / 余额 | `scripts/run.js whoami` | 报告账号、apiKey 脱敏摘要、微信配置状态 |
 | 公众号配好了吗 | `scripts/run.js wechat status` | 报告 `configured` 与当前 AppID |
@@ -82,7 +82,7 @@ AI 必须按这两步走：
    | state | 含义 | AI 该做什么 |
    |---|---|---|
    | `logged-in` | 凭证有效 **且** 微信公众号 AppID/AppSecret 已配置 | 报"已登录，账号 = `<name>`，公众号已就绪，可以使用 draft / publish / convert 了"。stdout JSON 的 `wechat.appId` 可以告诉用户绑定的是哪个公众号 |
-   | `logged-in-no-wechat` | 凭证有效，但 `wechat.configured == false`——账号绑好了但还没接公众号 | **不要**说"可以直接用了"。要明确告诉用户："登录成功，但还没绑定公众号 AppID / AppSecret，还差一步——下一步请说‘配置公众号’或直接调 `scripts/run.js wechat config`"。然后调 `wechat config` 把生成的 URL 原文给用户 |
+   | `logged-in-no-wechat` | 凭证有效，但 `wechat.configured == false`——账号绑好了但公众号 AppID/AppSecret 还没填齐（stdout 的 `wechat.appId` 非 null 表示 AppID 已留过，仅缺 AppSecret） | **三件事，按顺序做完，别只做前两件**：①不要说"可以直接用了"；②告诉用户"登录成功，但公众号配置还差一步"，措辞按 `wechat.appId` 是否为 null 区分（"AppID 已留过、缺 AppSecret" vs "AppID/AppSecret 都还没填"）；③**AI 自己**立即调用 `scripts/run.js wechat config`，把它返回的 stdout JSON 里 `url` **完整原文**呈现给用户。**不要**给用户贴 `cd ... && node scripts/run.js wechat config` 这种 shell 命令——AI 该自己跑的命令绝不外推给用户。 |
    | `awaiting-browser-confirm` | pending 文件存在、device-code 还在 TTL 内、但用户还没在浏览器点确认 | 催用户去浏览器点击"确认绑定"；用户说点完了之后再调一次 `login-status`。**不要立刻轮询本命令**——服务端状态只有用户点了才会变 |
    | `expired-pending` | device-code 5 分钟过期了 | 让用户重跑 `login` |
    | `not-logged-in` | 既没凭证也没 pending checkpoint | 让用户从 `login` 开始 |
@@ -95,12 +95,13 @@ AI 必须按这两步走：
 
    - ❌ 不要在 `login` 之后立刻紧密循环 `login-status`。`awaiting-browser-confirm` 完全正常，要等用户去浏览器操作；让用户主动告诉你"我点完了"再去查一次。
    - ❌ 不要因为 `login` 返回 `success: true` 就告诉用户"已登录"——`pendingCheckpoint: true` 表示**第二步还没做**，必须 `login-status` 返回 `logged-in` 或 `logged-in-no-wechat` 才算 device-code 流程完成。
-   - ❌ **不要看到 `logged-in-no-wechat` 也喊"现在可以用 web-publisher 了 / 可以发文章了"**——这个 state 表示账号绑了但还没接公众号 AppID/AppSecret，draft / publish / convert 必然失败。要告诉用户"还差一步：配置公众号"，然后跑 `wechat config`。
+   - ❌ **不要看到 `logged-in-no-wechat` 也喊"现在可以用 web-publisher 了 / 可以发文章了"**——这个 state 表示账号绑了但公众号 AppID/AppSecret 还没填齐，draft / publish 必然失败（`convert` 仍可用，因为它不接公众号）。要告诉用户"还差一步：配置公众号"，**然后 AI 自己跑** `wechat config`，把它输出的 URL 原文交给用户。
+   - ❌ **绝对不要把 `cd ~/.openclaw/workspace/skills/web-publisher && node scripts/run.js wechat config` 这种 shell 命令贴给用户**。`wechat config` 是 AI 自己执行的命令，用户只该看到执行结果（浏览器短链 + IP 白名单）。同样的规则适用于 `login` / `wrapper config` 等所有产生短链的命令——用户对话里只该出现 URL，不该出现 `cd` / `node` / `scripts/run.js` 之类的东西。
    - ❌ 不要用 `--force` 当默认行为；只有 `invalid-credentials` 或用户明确说"切换账号 / 重新绑定"才用。
    - ❌ 不要直接读 `~/.web-publisher/credentials.json` 试图判断登录状态——文件存在不代表 apiKey 还有效，更不代表公众号已配置。永远走 `login-status`。
    - ❌ 不要假定 `login` 之后会自动写凭证——0.9.x 没有后台进程；不调 `login-status`，凭证永远不会被拉下来。
 
-4. **`login --force` / 已登录 fast-path 的同样规则**：当 `login` 看到本地凭证仍然有效时也会走 fast-path 直接退出，stdout JSON 里有 `alreadyLoggedIn: true` + `wechat: { configured, appId }` + `nextStep` 字段。`nextStep == 'wechat-config-required'` 时，AI 同样要先提示用户配置公众号、不要直接说"可以用了"。
+4. **`login --force` / 已登录 fast-path 的同样规则**：当 `login` 看到本地凭证仍然有效时也会走 fast-path 直接退出，stdout JSON 里有 `alreadyLoggedIn: true` + `wechat: { configured, appId }` + `nextStep` 字段。`nextStep == 'wechat-config-required'` 时，AI 也要按 `logged-in-no-wechat` 那条规则处理：自己调 `wechat config` → 给用户 URL 原文，**不要**让用户去敲 shell 命令。
 
 5. **退出码约定**：`login-status` 在 `logged-in` / `logged-in-no-wechat` / `awaiting-browser-confirm` 返回 0（device-code 流程本身没问题）；其余状态返回 1，方便包装脚本用 `set -e` 直接判错。
 
@@ -234,7 +235,7 @@ AI 接下来要做：
 2. 等用户回来说"点完了"。
 3. 调 `scripts/run.js login-status`：
    - `state == "logged-in"` → 报"已登录，账号 = `<name>`，公众号已就绪，可以使用 draft / publish / convert"
-   - `state == "logged-in-no-wechat"` → 报"已登录，但还没绑定微信公众号 AppID/AppSecret，**还差一步**"，然后立即调 `scripts/run.js wechat config` 把生成的 URL 原文交给用户填写
+   - `state == "logged-in-no-wechat"` → 看 stdout `wechat.appId`：非 null 时报"已登录，但 AppSecret 还没填好（AppID `<id>` 已留过）"，null 时报"已登录，但还没绑定公众号 AppID/AppSecret"。**两种情况都要 AI 自己立即调用** `scripts/run.js wechat config`，把它返回的 `url` **完整原文**交给用户填写——**不是**把"运行 wechat config 这条命令"作为指令贴给用户
    - 其他 state 见上面《登录流程（AI 必看）》
 
    **这一步（login-status）是凭证真正落盘的时机**——0.9.x 没有后台进程，不主动调 login-status，凭证永远不会被拉下来。

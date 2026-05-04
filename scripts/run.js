@@ -496,9 +496,12 @@ async function runLogin(loginArgs) {
           flushStderr(`       凭证：${CREDENTIALS_PATH}\n`);
           if (wechatConfigured) {
             flushStderr(`       公众号：已配置 (appId=${who.wechat?.appId || '?'})\n`);
+          } else if (who.wechat?.appId) {
+            flushStderr(`       公众号：未完成（AppID=${who.wechat.appId} 已填，但 AppSecret 缺失或失效）\n`);
+            flushStderr(`               → AI 应自行调用 \`wechat config\`，把它输出的浏览器短链原文交给用户填写 AppSecret\n`);
           } else {
-            flushStderr(`       公众号：未配置\n`);
-            flushStderr(`               → 下一步：web-publisher wechat config  （浏览器里填 AppID / AppSecret，否则 draft / publish 用不了）\n`);
+            flushStderr(`       公众号：未配置 (AppID/AppSecret 都还没填)\n`);
+            flushStderr(`               → AI 应自行调用 \`wechat config\`，把它输出的浏览器短链原文交给用户\n`);
           }
           flushStderr(`       如需切换账号或强制重新绑定，请运行：web-publisher login --force\n`);
           flushStdout(JSON.stringify({
@@ -790,7 +793,14 @@ async function fillStatusFromExisting(status, existing) {
         status.note = `已登录，账号 = ${accountLabel}；公众号已配置（appId=${who.wechat?.appId || '?'}），可以使用 draft / publish / convert`;
       } else {
         status.state = 'logged-in-no-wechat';
-        status.note = `已登录，账号 = ${accountLabel}；但还没绑定微信公众号 AppID/AppSecret。下一步请运行：web-publisher wechat config，按提示在浏览器里填写。完成后 draft / publish 才能用`;
+        // 区分 "AppID 有 + AppSecret 缺" 和 "什么都没填"——前者文案要明确告诉用户
+        // AppID 已留过，否则容易误以为之前填的东西丢了。
+        const wechatGap = who.wechat?.appId
+          ? `AppID=${who.wechat.appId} 已填，但 AppSecret 缺失或失效`
+          : `AppID/AppSecret 都还没填`;
+        status.note = `已登录，账号 = ${accountLabel}；但公众号配置不完整（${wechatGap}）。`
+          + `下一步请由 AI agent 调用 \`scripts/run.js wechat config\`，把它输出的浏览器短链交给用户。`
+          + `用户在浏览器里完成填写后再调一次 login-status 验证。`;
       }
       return;
     }
@@ -818,9 +828,12 @@ function emitStatus(status) {
   if (status.wechat) {
     if (status.wechat.configured) {
       flushStderr(`  wechat: configured (appId=${status.wechat.appId || '?'})\n`);
+    } else if (status.wechat.appId) {
+      flushStderr(`  wechat: incomplete — AppID=${status.wechat.appId} 已填，AppSecret 缺失或失效\n`);
+      flushStderr(`          → AI 应自行调用 \`wechat config\`（不是把命令贴给用户），把它输出的浏览器短链原文交给用户\n`);
     } else {
-      flushStderr(`  wechat: NOT configured\n`);
-      flushStderr(`          → 下一步: web-publisher wechat config  （在浏览器里填写 AppID / AppSecret）\n`);
+      flushStderr(`  wechat: NOT configured (AppID/AppSecret 都还没填)\n`);
+      flushStderr(`          → AI 应自行调用 \`wechat config\`（不是把命令贴给用户），把它输出的浏览器短链原文交给用户\n`);
     }
   }
   if (status.userCode) flushStderr(`  userCode: ${status.userCode}\n`);
