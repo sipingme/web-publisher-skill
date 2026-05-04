@@ -1,6 +1,6 @@
 {
   "name": "web-publisher",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "requiredEnvVars": [],
   "requires": {
     "runtime": {
@@ -11,7 +11,7 @@
   },
   "skill": {
     "name": "web-publisher",
-    "version": "0.9.0",
+    "version": "0.9.1",
     "enabled": true,
     "autoInvoke": false
   },
@@ -24,7 +24,7 @@
     "login-status": {
       "script": "./scripts/run.js",
       "args": ["login-status"],
-      "description": "完成登录的第二步：读取 pending checkpoint -> 一次性 POST /skill/device/poll -> bound 时把凭证写到 credentials.json 并删除 checkpoint。也用于检查当前状态：not-logged-in / awaiting-browser-confirm（用户还没点确认） / logged-in / expired-pending（device-code 过期，请重新 login） / invalid-credentials（apiKey 失效，请 login --force） / polling-failed（网络/服务端错，可重试本命令） / persist-failed（服务端绑定成功但本地写盘失败）。Exit code 0 表示 logged-in 或 awaiting-browser-confirm，其他状态 exit 1。"
+      "description": "完成登录的第二步：读取 pending checkpoint -> 一次性 POST /skill/device/poll -> bound 时把凭证写到 credentials.json 并删除 checkpoint，然后 GET /skill/whoami 拿账号信息和微信公众号配置状态。状态：logged-in（账号有效 **且** 公众号 AppID/AppSecret 已配置，可以发布） / logged-in-no-wechat（账号绑了但还没配置公众号，**AI 必须接着提示用户跑 `wechat config`**，draft / publish 在这个状态下会失败） / awaiting-browser-confirm（用户还没点确认） / expired-pending / invalid-credentials（apiKey 失效，请 login --force） / polling-failed / persist-failed / not-logged-in / logged-in-unverified。Exit code 0 表示 logged-in / logged-in-no-wechat / awaiting-browser-confirm，其他状态 exit 1。"
     },
     "logout": {
       "script": "./scripts/run.js",

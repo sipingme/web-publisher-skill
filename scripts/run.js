@@ -490,16 +490,30 @@ async function runLogin(loginArgs) {
         const { res, data } = await tools('GET', '/skill/whoami', null, existing);
         if (res.ok) {
           const who = data || {};
+          const wechatConfigured = Boolean(who.wechat?.configured);
           flushStderr(`[info] 已检测到本地凭证且仍然有效，跳过授权流程。\n`);
           flushStderr(`       账号：${who.name || who.userId || existing.userId}\n`);
           flushStderr(`       凭证：${CREDENTIALS_PATH}\n`);
+          if (wechatConfigured) {
+            flushStderr(`       公众号：已配置 (appId=${who.wechat?.appId || '?'})\n`);
+          } else {
+            flushStderr(`       公众号：未配置\n`);
+            flushStderr(`               → 下一步：web-publisher wechat config  （浏览器里填 AppID / AppSecret，否则 draft / publish 用不了）\n`);
+          }
           flushStderr(`       如需切换账号或强制重新绑定，请运行：web-publisher login --force\n`);
           flushStdout(JSON.stringify({
             success: true,
             alreadyLoggedIn: true,
             userId: who.userId || existing.userId,
             name: who.name || null,
-            apiKey: maskApiKey(existing.apiKey)
+            apiKey: maskApiKey(existing.apiKey),
+            wechat: {
+              configured: wechatConfigured,
+              appId: who.wechat?.appId || null
+            },
+            // AI 必读：alreadyLoggedIn=true 不等于"可以直接发布"。先看
+            // wechat.configured，false 时必须提示用户去跑 `wechat config`。
+            nextStep: wechatConfigured ? 'ready' : 'wechat-config-required'
           }, null, 2) + '\n');
           process.exit(0);
         }
@@ -717,12 +731,25 @@ async function runLoginStatus() {
     if (persisted) {
       // Only retire the checkpoint after credentials.json is on disk.
       deleteLoginPending();
-      status.state = 'logged-in';
-      status.userId = pollData.userId;
-      status.name = pollData.name || null;
-      status.apiKey = maskApiKey(pollData.apiKey);
-      status.source = 'file';
-      status.note = `登录成功，凭证已写入 ${CREDENTIALS_PATH} (mode 0600)`;
+      // Re-load credentials and run the standard whoami + wechat-config check
+      // so this branch produces exactly the same shape (state +
+      // wechat.configured) as the "already had credentials" path. This is
+      // what tells the AI whether to greet the user with "可以发布了" or with
+      // "下一步：wechat config"——bound itself doesn't tell us anything about
+      // the user's WeChat AppID/AppSecret state.
+      const reloaded = loadCredentials();
+      if (reloaded) {
+        await fillStatusFromExisting(status, reloaded);
+      } else {
+        // Should be unreachable—we just wrote the file. If it happens, fall
+        // back to a minimal logged-in payload so the user at least sees the
+        // success and can debug locally.
+        status.state = 'logged-in-unverified';
+        status.userId = pollData.userId;
+        status.name = pollData.name || null;
+        status.apiKey = maskApiKey(pollData.apiKey);
+        status.note = `凭证刚写入但 reload 失败；请手动运行 whoami / wechat status 验证`;
+      }
     } else {
       status.state = 'persist-failed';
       status.userId = pollData.userId;
@@ -741,12 +768,30 @@ async function fillStatusFromExisting(status, existing) {
   try {
     const { res, data } = await tools('GET', '/skill/whoami', null, existing);
     if (res.ok) {
-      status.state = 'logged-in';
-      status.userId = data?.userId || existing.userId;
-      status.name = data?.name || null;
+      const who = data || {};
+      const accountLabel = who.name || who.userId || existing.userId;
+      const wechatConfigured = Boolean(who.wechat?.configured);
+
+      status.userId = who.userId || existing.userId;
+      status.name = who.name || null;
       status.apiKey = maskApiKey(existing.apiKey);
       status.source = existing.source;
-      status.note = `已登录，账号 = ${data?.name || data?.userId || existing.userId}`;
+      status.wechat = {
+        configured: wechatConfigured,
+        appId: who.wechat?.appId || null
+      };
+
+      // 拆开 "凭证有效" 和 "可以发布" 这两件事——AI 拿 logged-in 不能直接喊
+      // "可以发文章了"，必须先看 wechat.configured。logged-in-no-wechat 是
+      // 一个完全合法的中间态：账号已绑定，但还没接入公众号 AppID/AppSecret，
+      // draft / publish 必然失败。
+      if (wechatConfigured) {
+        status.state = 'logged-in';
+        status.note = `已登录，账号 = ${accountLabel}；公众号已配置（appId=${who.wechat?.appId || '?'}），可以使用 draft / publish / convert`;
+      } else {
+        status.state = 'logged-in-no-wechat';
+        status.note = `已登录，账号 = ${accountLabel}；但还没绑定微信公众号 AppID/AppSecret。下一步请运行：web-publisher wechat config，按提示在浏览器里填写。完成后 draft / publish 才能用`;
+      }
       return;
     }
     if (res.status === 401 || res.status === 403) {
@@ -757,11 +802,11 @@ async function fillStatusFromExisting(status, existing) {
     }
     status.state = 'logged-in-unverified';
     status.userId = existing.userId;
-    status.note = `whoami 返回 HTTP ${res.status}，凭证可能仍然有效`;
+    status.note = `whoami 返回 HTTP ${res.status}，凭证可能仍然有效；微信公众号配置状态未知`;
   } catch (err) {
     status.state = 'logged-in-unverified';
     status.userId = existing.userId;
-    status.note = `无法连接服务端校验：${err.message || err}`;
+    status.note = `无法连接服务端校验：${err.message || err}；微信公众号配置状态未知`;
   }
 }
 
@@ -770,15 +815,27 @@ function emitStatus(status) {
   if (status.note) flushStderr(`  ${status.note}\n`);
   if (status.userId) flushStderr(`  userId: ${status.userId}\n`);
   if (status.name) flushStderr(`  name:   ${status.name}\n`);
+  if (status.wechat) {
+    if (status.wechat.configured) {
+      flushStderr(`  wechat: configured (appId=${status.wechat.appId || '?'})\n`);
+    } else {
+      flushStderr(`  wechat: NOT configured\n`);
+      flushStderr(`          → 下一步: web-publisher wechat config  （在浏览器里填写 AppID / AppSecret）\n`);
+    }
+  }
   if (status.userCode) flushStderr(`  userCode: ${status.userCode}\n`);
   if (status.expiresAt) flushStderr(`  expiresAt: ${new Date(status.expiresAt).toISOString()}\n`);
 
   flushStdout(JSON.stringify(status, null, 2) + '\n');
-  // Healthy in-flight states (logged-in, awaiting-browser-confirm) → exit 0.
-  // Everything else (not-logged-in, expired-pending, invalid-credentials,
-  // polling-failed, persist-failed, logged-in-unverified) → exit 1 so a
-  // wrapping script's `set -e` notices.
-  const ok = status.state === 'logged-in' || status.state === 'awaiting-browser-confirm';
+  // Healthy in-flight / "登录链路本身没问题" 的几个状态都返回 exit 0：
+  //   - logged-in              凭证有效 + 公众号已配置（可以直接 publish）
+  //   - logged-in-no-wechat    凭证有效但还没接公众号（需 wechat config 但
+  //                            login 这一步本身是成功的）
+  //   - awaiting-browser-confirm  device-code 还在 TTL 内等用户点确认
+  // 其他都是 exit 1，方便外层 `set -e`。
+  const ok = status.state === 'logged-in'
+    || status.state === 'logged-in-no-wechat'
+    || status.state === 'awaiting-browser-confirm';
   process.exit(ok ? 0 : 1);
 }
 
