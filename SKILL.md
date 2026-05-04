@@ -1,6 +1,6 @@
 ---
 name: web-publisher
-version: 0.9.3
+version: 0.9.4
 description: 输入文章 URL **或本地文档（PDF/DOCX/PPTX/XLSX/EPUB/图片/音频/...）**，自动提取正文、可选 AI 改写、并发布到微信公众号；也可只把任意文档转成 Markdown 文本（不发布）。抓取 / 转换 / 改写 / 发布都在服务端 (tools.siping.me) 完成，CLI 不装任何 npm 依赖；登录、公众号配置全部通过对话 + 一次性浏览器跳转完成。⚠️ 服务端走云端固定 IP，**对小红书、部分知乎专栏、登录墙文章、海外站点经常被反爬挡掉**——此时由 AI Agent（Hermes / Cursor / OpenClaw 等）改调用**用户本地安装的 `news-to-markdown-skill`** 把 URL 抓成 Markdown，然后人工复核 / 归档。也可配合 `browser-web-search` 先搜索拿到 URL 再批量发布。
 author: Ping Si <sipingme@gmail.com>
 tags: [publish, wechat, article, content, onboarding, pdf, docx, markitdown]
@@ -262,7 +262,7 @@ AI 接下来要做：
 
 ### （可选）环境变量
 
-仅 CI / 无浏览器场景使用，优先级高于本地凭证：
+仅 CI / 无浏览器场景使用：
 
 | 变量 | 说明 |
 |---|---|
@@ -270,6 +270,12 @@ AI 接下来要做：
 | `WEB_PUBLISHER_API_URL` | pipeline API（登录后凭证文件里也会带） |
 | `WEB_PUBLISHER_USER_ID` | 用户 ID（如 `usr_xxxx`） |
 | `WEB_PUBLISHER_API_KEY` | API Key |
+
+**优先级（0.9.4 起反转）**：`~/.web-publisher/credentials.json` **优先于** 上述环境变量。
+
+- 0.9.3 及之前：env > file，导致老的 `WEB_PUBLISHER_*` 残留（比如 OpenClaw 配置里）会静默盖掉新登录写出来的凭证，新 `login` 看上去"什么也没干"。
+- 0.9.4 起：file > env。`web-publisher login → login-status` 写出的凭证立刻生效，env 自动让位。两者同时存在时 CLI 会在 stderr 打一条 `[warn]` 提醒。
+- CI 想要 env 生效：先 `web-publisher logout` 删除本地凭证，或确保运行环境里 `~/.web-publisher/credentials.json` 不存在。
 
 ## 命令参考
 

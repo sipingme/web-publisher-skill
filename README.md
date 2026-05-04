@@ -62,7 +62,7 @@ AI 会执行 `scripts/run.js wrapper config`，再次给一条短链。在浏览
 
 ### 环境变量（可选，CI 使用）
 
-凭证文件优先；以下变量仅在无浏览器环境（如 CI）使用，优先级更高：
+凭证文件优先（0.9.4 起）；env vars 仅在没有 `~/.web-publisher/credentials.json` 时生效：
 
 | 变量 | 说明 |
 |---|---|
@@ -70,6 +70,8 @@ AI 会执行 `scripts/run.js wrapper config`，再次给一条短链。在浏览
 | `WEB_PUBLISHER_API_URL` | pipeline API 地址（登录会自动写入凭证） |
 | `WEB_PUBLISHER_USER_ID` | 用户 ID |
 | `WEB_PUBLISHER_API_KEY` | API Key |
+
+> 想强制走 env：先 `web-publisher logout` 删除本地凭证。两者同时存在时 CLI 会在 stderr 打一条 `[warn]` 提示 file 正在覆盖 env，避免静默踩坑。
 
 ## 使用示例
 

@@ -118,6 +118,11 @@ function resolveToolsUrl() {
   return fromEnv && fromEnv.length > 0 ? fromEnv : DEFAULT_TOOLS_URL;
 }
 
+// Stderr warning is rate-limited to one print per process so callers that
+// invoke loadCredentials() multiple times (e.g. login-status -> emitStatus
+// -> later runWhoami in tests) don't spam the user.
+let _envShadowedWarned = false;
+
 function loadCredentials() {
   // Pull every secret out of process.env / the on-disk credentials file at
   // call time. There are NO secret literals in this source file; each
@@ -131,18 +136,32 @@ function loadCredentials() {
     apiKey: process.env.WEB_PUBLISHER_API_KEY,
     apiUrl: process.env.WEB_PUBLISHER_API_URL
   };
+  const envHasLogin = Boolean(env.userId && env.apiKey);
 
-  if (env.userId && env.apiKey) {
-    return {
-      ...env,
-      source: 'env',
-      apiUrl: env.apiUrl || '',
-      toolsUrl: resolveToolsUrl()
-    };
-  }
-
+  // Precedence: on-disk credentials.json wins over env vars.
+  //
+  // History: 0.9.3 and earlier had env > file. That bit users with stale
+  // WEB_PUBLISHER_* set in their AI agent (OpenClaw, etc.) from earlier
+  // experiments — `web-publisher login` would write a fresh credentials.json
+  // but the CLI silently kept using the stale env apiKey, leaving the user
+  // baffled why login "did nothing". 0.9.4 flips the order: an explicit
+  // device-bind always takes precedence over ambient env.
+  //
+  // CI / scripted users who really want env to win should remove
+  // ~/.web-publisher/credentials.json (e.g. via `web-publisher logout`)
+  // before running. We surface the env -> file precedence with a one-shot
+  // stderr warning when both sources are present so neither side is
+  // silently ignored.
   const fileCreds = readCredentialsFile();
   if (fileCreds) {
+    if (envHasLogin && !_envShadowedWarned) {
+      _envShadowedWarned = true;
+      process.stderr.write(
+        '[warn] 检测到 WEB_PUBLISHER_USER_ID/API_KEY 环境变量，但本地有 ' +
+        CREDENTIALS_PATH + '；优先使用本地凭证（0.9.4 起 file > env）。\n' +
+        '       如需用环境变量，请先删除该凭证文件或运行 `web-publisher logout`。\n'
+      );
+    }
     // Strip the on-disk schema version before forwarding; callers only care
     // about the credential fields themselves.
     const { version: _v, ...rest } = fileCreds;
@@ -151,6 +170,15 @@ function loadCredentials() {
       source: 'file',
       apiUrl: rest.apiUrl || env.apiUrl || '',
       toolsUrl: rest.toolsUrl || resolveToolsUrl()
+    };
+  }
+
+  if (envHasLogin) {
+    return {
+      ...env,
+      source: 'env',
+      apiUrl: env.apiUrl || '',
+      toolsUrl: resolveToolsUrl()
     };
   }
 
