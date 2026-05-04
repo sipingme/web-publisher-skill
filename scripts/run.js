@@ -54,6 +54,29 @@ const PKG_VERSION = readSkillVersion();
 // Small helpers
 // ----------------------------------------------------------------------------
 
+// Synchronous, blocking writes to fd 1 / fd 2 — bypasses libuv's async write
+// queue. We use these on the login success path because the alternative,
+// `process.stderr.write` / `console.log`, is *non-blocking* whenever stdio is
+// a pipe (which happens any time the CLI is invoked by an AI agent / IDE
+// shell tool / wrapper, not a real TTY). In that mode "write returned" only
+// means "queued in libuv"; if the process exits or gets SIGTERM-ed before
+// the queue drains, the bytes never reach the parent reader and the user
+// sees nothing despite the file having been written. fs.writeSync only
+// returns after the data is in the OS pipe buffer, eliminating that race.
+function flushStderr(s) {
+  try {
+    fs.writeSync(2, s);
+  } catch (_) {
+    // EPIPE / EBADF when parent has already closed our stderr — silently
+    // drop. There's nothing useful we can do at that point.
+  }
+}
+function flushStdout(s) {
+  try {
+    fs.writeSync(1, s);
+  } catch (_) {}
+}
+
 function requireCredentials() {
   const creds = loadCredentials();
   if (!creds) {
@@ -453,43 +476,43 @@ async function runLogin(loginArgs) {
         const { res, data } = await tools('GET', '/skill/whoami', null, existing);
         if (res.ok) {
           const who = data || {};
-          process.stderr.write(`[info] 已检测到本地凭证且仍然有效，跳过授权流程。\n`);
-          process.stderr.write(`       账号：${who.name || who.userId || existing.userId}\n`);
-          process.stderr.write(`       凭证：${CREDENTIALS_PATH}\n`);
-          process.stderr.write(`       如需切换账号或强制重新绑定，请运行：web-publisher login --force\n`);
-          console.log(JSON.stringify({
+          flushStderr(`[info] 已检测到本地凭证且仍然有效，跳过授权流程。\n`);
+          flushStderr(`       账号：${who.name || who.userId || existing.userId}\n`);
+          flushStderr(`       凭证：${CREDENTIALS_PATH}\n`);
+          flushStderr(`       如需切换账号或强制重新绑定，请运行：web-publisher login --force\n`);
+          flushStdout(JSON.stringify({
             success: true,
             alreadyLoggedIn: true,
             userId: who.userId || existing.userId,
             name: who.name || null,
             apiKey: maskApiKey(existing.apiKey)
-          }, null, 2));
-          return;
+          }, null, 2) + '\n');
+          process.exit(0);
         }
         if (res.status === 401 || res.status === 403) {
           // 本地凭证存在但服务端拒绝：apiKey 已经无效，安静地清掉再走完整流程。
-          process.stderr.write('[info] 本地凭证已失效（服务端拒绝），将重新发起授权…\n');
+          flushStderr('[info] 本地凭证已失效（服务端拒绝），将重新发起授权…\n');
           deleteCredentialsFile();
         } else {
           // 其他非 2xx：当作未知错误，让用户继续重新绑定。
-          process.stderr.write(`[warn] 校验本地凭证时收到 HTTP ${res.status}，将重新发起授权…\n`);
+          flushStderr(`[warn] 校验本地凭证时收到 HTTP ${res.status}，将重新发起授权…\n`);
         }
       } catch (err) {
         // 网络异常：不删本地凭证，也不强制重绑——给用户一个清楚的逃生通道。
-        process.stderr.write(`[warn] 无法连接服务端校验本地凭证（${err.message || err}），跳过授权流程。\n`);
-        process.stderr.write(`       如需强制重新绑定，请运行：web-publisher login --force\n`);
-        console.log(JSON.stringify({
+        flushStderr(`[warn] 无法连接服务端校验本地凭证（${err.message || err}），跳过授权流程。\n`);
+        flushStderr(`       如需强制重新绑定，请运行：web-publisher login --force\n`);
+        flushStdout(JSON.stringify({
           success: true,
           alreadyLoggedIn: true,
           verified: false,
           userId: existing.userId,
           apiKey: maskApiKey(existing.apiKey)
-        }, null, 2));
-        return;
+        }, null, 2) + '\n');
+        process.exit(0);
       }
     }
   } else {
-    process.stderr.write('[info] --force 已指定，将忽略本地凭证并重新发起授权。\n');
+    flushStderr('[info] --force 已指定，将忽略本地凭证并重新发起授权。\n');
   }
 
   const toolsUrl = resolveToolsUrl().replace(/\/$/, '');
@@ -562,6 +585,22 @@ async function runLogin(loginArgs) {
     if (pollResp.data?.status === 'pending') continue;
     if (pollResp.data?.status === 'bound') {
       const creds = pollResp.data;
+
+      // Print "I just got the bound response" *before* we touch the disk.
+      // Reasons:
+      //  1) Confirms to the user (or the wrapping agent) that device flow
+      //     reached its terminal state, even if the next step crashes,
+      //     gets SIGTERM-ed, or has its stdio closed by the parent.
+      //  2) Shrinks the "wrote credentials but printed nothing" window —
+      //     previously the only success markers came after writeFileSync,
+      //     so a parent that killed us between those two steps left the
+      //     user staring at a silent terminal with credentials on disk.
+      //  3) Uses the synchronous fd writer so it actually reaches the OS
+      //     pipe buffer before we move on; non-TTY stdio is async by
+      //     default and can otherwise be lost on quick exit.
+      flushStderr(`\n收到绑定回执：${creds.name || creds.userId}\n`);
+      flushStderr(`正在写入本地凭证：${CREDENTIALS_PATH}\n`);
+
       // Persistence failure used to silently drop the freshly-issued apiKey:
       // the server has already marked the device code 'consumed' and saved
       // an api_key on the user row, so a thrown writeFileSync would bubble
@@ -585,30 +624,35 @@ async function runLogin(loginArgs) {
         persistError = err;
       }
 
-      process.stderr.write(`\n登录成功：${creds.name || creds.userId}\n`);
+      flushStderr(`登录成功：${creds.name || creds.userId}\n`);
       if (persisted) {
-        process.stderr.write(`凭证已保存到 ${CREDENTIALS_PATH} (mode 0600)\n`);
+        flushStderr(`凭证已保存到 ${CREDENTIALS_PATH} (mode 0600)\n`);
       } else {
-        process.stderr.write(`[error] 写入凭证失败：${persistError?.message || persistError}\n`);
-        process.stderr.write(`        路径：${CREDENTIALS_PATH}\n`);
-        process.stderr.write('        本次会话仍可通过环境变量临时使用（注意：apiKey 已发放，下次登录会复用同一把 key）：\n');
-        process.stderr.write(`          export WEB_PUBLISHER_USER_ID='${creds.userId}'\n`);
-        process.stderr.write(`          export WEB_PUBLISHER_API_KEY='${creds.apiKey}'\n`);
+        flushStderr(`[error] 写入凭证失败：${persistError?.message || persistError}\n`);
+        flushStderr(`        路径：${CREDENTIALS_PATH}\n`);
+        flushStderr('        本次会话仍可通过环境变量临时使用（注意：apiKey 已发放，下次登录会复用同一把 key）：\n');
+        flushStderr(`          export WEB_PUBLISHER_USER_ID='${creds.userId}'\n`);
+        flushStderr(`          export WEB_PUBLISHER_API_KEY='${creds.apiKey}'\n`);
         if (creds.apiUrl) {
-          process.stderr.write(`          export WEB_PUBLISHER_API_URL='${creds.apiUrl}'\n`);
+          flushStderr(`          export WEB_PUBLISHER_API_URL='${creds.apiUrl}'\n`);
         }
-        process.stderr.write('        修好磁盘问题后再次运行 web-publisher login 可写入正常凭证文件。\n');
+        flushStderr('        修好磁盘问题后再次运行 web-publisher login 可写入正常凭证文件。\n');
       }
 
-      console.log(JSON.stringify({
+      flushStdout(JSON.stringify({
         success: true,
         userId: creds.userId,
         apiKey: maskApiKey(creds.apiKey),
         name: creds.name || null,
         persisted,
         persistError: persistError ? String(persistError.message || persistError) : null
-      }, null, 2));
-      return;
+      }, null, 2) + '\n');
+      // Force a clean exit so the agent / wrapper sees EOF on our stdio
+      // immediately. Bare `return` would let the event loop drain by itself,
+      // which is correct but adds latency before the parent knows we're
+      // done — and during that window any buffered output in libuv can
+      // still get lost if the parent decides to detach.
+      process.exit(0);
     }
   }
 
