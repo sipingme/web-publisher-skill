@@ -1,6 +1,6 @@
 {
   "name": "web-publisher",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "requiredEnvVars": [],
   "requires": {
     "runtime": {
@@ -11,7 +11,7 @@
   },
   "skill": {
     "name": "web-publisher",
-    "version": "0.7.0",
+    "version": "0.7.1",
     "enabled": true,
     "autoInvoke": false
   },
