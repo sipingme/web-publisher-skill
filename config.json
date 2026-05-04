@@ -150,6 +150,16 @@
         "<WEB_PUBLISHER_API_URL>"
       ],
       "note": "Calls tools.siping.me for account onboarding and the user-configured pipeline API for publishing / converting. Local files supplied to draft|publish|convert are streamed via multipart to the pipeline API; the agent does not read arbitrary files outside what the user explicitly passes."
+    },
+    "subprocess": {
+      "spawn": [
+        {
+          "executable": "<process.execPath>",
+          "args": ["<scripts/run.js path>", "__login-daemon", "--device-code <opaque>", "--expires-in <int>", "--poll-interval <int>", "--tools-url <url>"],
+          "shell": false,
+          "purpose": "Re-launch this same script as a detached background poller for `web-publisher login`, so the foreground command can return in ~1s instead of blocking on the 5-minute device-code polling loop. Argv is fixed; the four variable values come from our own /skill/device/init response. No other subprocess execution exists in the package."
+        }
+      ]
     }
   },
   "capabilities": {
@@ -169,6 +179,22 @@
           "Wrapper 内容由用户在浏览器表单提交，避免敏感联系方式（二维码、微信号）落入对话上下文",
           "logout 命令可远端撤销 apiKey 并清理本地文件",
           "所有操作可在 tools.siping.me 审计"
+        ]
+      },
+      {
+        "type": "subprocess-spawn-self",
+        "riskLevel": "low",
+        "description": "`web-publisher login` 用 child_process.spawn 把自己（同一个 Node 二进制 + 同一个 run.js）以 `__login-daemon` 内部子命令重新启动一次，作为 detached 后台轮询进程。0.7.x 之前 login 在前台跑 5 分钟轮询，被 IDE / agent shell tool 包起来时 wrapper 经常会丢掉成功输出；0.8.0 拆出来后前台 ~1s 退出。",
+        "risks": [
+          "如果 spawn 的 argv / 环境被攻击者污染，可能导致任意命令执行或权限提升"
+        ],
+        "mitigations": [
+          "shell:false（spawn 默认值，从未 override），子进程不经过 shell 解析",
+          "argv[0] = process.execPath，argv[1] = __filename；二者均不可由网络/用户控制",
+          "其余 argv 仅有四项（deviceCode / expiresInSec / pollIntervalSec / toolsUrl）来自我们自己的 POST /skill/device/init 响应；deviceCode 是 CSPRNG 不透明 token，整数项 String() 化，URL 项写入 PID 文件可审计",
+          "子进程接收的环境是 allow-list（PATH/HOME/USERPROFILE/WEB_PUBLISHER_TOOLS_URL），父进程可能存在的 WEB_PUBLISHER_API_KEY 等凭证不会传入",
+          "stdio:'ignore' 切断与父进程的输入输出通道",
+          "全包仅此一处调用 child_process（详见 scripts/run.js 的 require('child_process') 上方注释、spawnLoginDaemon 函数前 docblock）"
         ]
       }
     ]

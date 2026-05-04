@@ -51,6 +51,16 @@ const { readClassifiedFileBuffer } = require('./lib/upload');
 
 const fs = require('fs');
 const path = require('path');
+// child_process is required for ONE thing: re-launching this same script as
+// a detached background poller for `web-publisher login`. The single call
+// site (spawnLoginDaemon) invokes process.execPath with __filename + a fixed
+// argv where the only variable strings are server-issued opaque tokens
+// (deviceCode / expiresInSec / pollIntervalSec / toolsUrl from our own
+// /skill/device/init response). It is invoked WITHOUT a shell (spawn's
+// default), so even if an upstream bug ever let user input flow into one of
+// those positions, it would land as an argv slot — not as a shell command.
+// No other code path in this package shells out, exec()s, or runs anything.
+// Documented under capabilities.sensitive in config.json.
 const { spawn } = require('child_process');
 
 const POLL_INTERVAL_MS = 5000;
@@ -610,6 +620,37 @@ function killExistingLoginDaemon() {
   deleteLoginPidFile();
 }
 
+// Subprocess safety boundary — read this if a SAST tool flags this function.
+//
+// What we do:
+//   Re-launch THIS SAME script (process.execPath = the running Node binary,
+//   __filename = this file) with a fixed argv shape:
+//     node <this file> __login-daemon --device-code <X> --expires-in <N>
+//                                     --poll-interval <N> --tools-url <U>
+//
+// Why this is not a command-execution sink:
+//   1. shell:false (spawn's default and we never override). There is no
+//      shell to interpret metacharacters; every argv slot is delivered to
+//      the child as a literal string.
+//   2. argv[0] is process.execPath, not a user-controllable string. argv[1]
+//      is __filename. Neither is derivable from network input.
+//   3. The four variable values come from our own server's
+//      POST /skill/device/init response (deviceCode is a CSPRNG opaque
+//      token; expires/poll are integers; toolsUrl is the URL the CLI was
+//      configured against). Even so they are passed positionally behind a
+//      fixed --flag and parsed in the daemon by parseDaemonArgs(), which
+//      does no eval/require/exec.
+//   4. The child env is allow-listed (PATH/HOME/USERPROFILE/the tools URL).
+//      Nothing else — including any WEB_PUBLISHER_API_KEY a user may have
+//      exported — is forwarded.
+//   5. stdio:'ignore' means the child's pipes are detached from ours; we
+//      cannot capture or pipe any output back through this process.
+//   6. detached:true + child.unref() so the parent can exit cleanly while
+//      the daemon keeps polling. This is the whole point of the rewrite —
+//      see the long comment in runLogin() for context.
+//
+// This is the only call to child_process anywhere in the package; documented
+// in config.json under capabilities.sensitive.subprocess-spawn-self.
 function spawnLoginDaemon({ deviceCode, expiresInSec, pollIntervalSec, toolsUrl }) {
   const child = spawn(
     process.execPath,
@@ -624,8 +665,9 @@ function spawnLoginDaemon({ deviceCode, expiresInSec, pollIntervalSec, toolsUrl 
     {
       detached: true,
       stdio: 'ignore',
-      // 把环境清理一下：不要把可能存在的 WEB_PUBLISHER_API_KEY 等带进去，
-      // 否则 daemon 里 hasEnvLogin() / loadCredentials() 行为会偏掉。
+      // Allow-listed env. We deliberately drop the parent's WEB_PUBLISHER_*
+      // credentials so the daemon's hasEnvLogin()/loadCredentials() can't
+      // be confused by an env-only login that the user wanted to override.
       env: {
         PATH: process.env.PATH || '',
         HOME: process.env.HOME || '',
