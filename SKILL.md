@@ -1,6 +1,6 @@
 ---
 name: web-publisher
-version: 0.9.4
+version: 0.9.5
 description: 输入文章 URL **或本地文档（PDF/DOCX/PPTX/XLSX/EPUB/图片/音频/...）**，自动提取正文、可选 AI 改写、并发布到微信公众号；也可只把任意文档转成 Markdown 文本（不发布）。抓取 / 转换 / 改写 / 发布都在服务端 (tools.siping.me) 完成，CLI 不装任何 npm 依赖；登录、公众号配置全部通过对话 + 一次性浏览器跳转完成。⚠️ 服务端走云端固定 IP，**对小红书、部分知乎专栏、登录墙文章、海外站点经常被反爬挡掉**——此时由 AI Agent（Hermes / Cursor / OpenClaw 等）改调用**用户本地安装的 `news-to-markdown-skill`** 把 URL 抓成 Markdown，然后人工复核 / 归档。也可配合 `browser-web-search` 先搜索拿到 URL 再批量发布。
 author: Ping Si <sipingme@gmail.com>
 tags: [publish, wechat, article, content, onboarding, pdf, docx, markitdown]
@@ -19,7 +19,7 @@ tags: [publish, wechat, article, content, onboarding, pdf, docx, markitdown]
 | 帮我登录 / 注册 / 绑定账号 | `scripts/run.js login` | **fire-and-forget (checkpoint 模型)**：命令 ~0.3s 返回，写 `~/.web-publisher/login-pending.json` 等待用户在浏览器授权。把 stdout JSON 里的 `verifyUrl` **原文**交给用户，附上 `userCode`。**不要 await login** 它已经退出了。等用户说"点完了"再调 `scripts/run.js login-status` 把凭证拉下来 |
 | 检查登录是否完成 / 我登上没 / 完成登录第二步 | `scripts/run.js login-status` | 一次性向服务端查 device-code 状态并写凭证。`state`：`logged-in` = 已登录 **且** 公众号已配置（可以发文章了）；`logged-in-no-wechat` = 账号绑好了但公众号 AppID/AppSecret 还没填齐，**AI 必须自己接着调用 `wechat config`**（不要把命令贴给用户让他敲）然后只把生成的 URL 原文给用户，否则 draft / publish 会失败；`awaiting-browser-confirm` = 用户还没在浏览器点确认（催用户去点，再隔几秒重试本命令）；`expired-pending` = device-code 5 分钟过期了，重跑 `login`；`invalid-credentials` = apiKey 已失效，建议 `login --force`；`polling-failed` = 网络/服务端临时错，可重试本命令；`persist-failed` = 服务端绑定成功但本地写盘失败（看 `note` 里的 fallback 环境变量）；`not-logged-in` = 没启动过 login |
 | 配置/绑定公众号 / 配 AppID | `scripts/run.js wechat config` | **两件事必须一并交付，缺一不可**：(1) 把 stdout JSON 里 `url` 字段的完整 URL **原文粘贴**给用户（不包装 Markdown 链接、不用"点击此处"替代）；(2) 把 stdout JSON 里 `serverIps` 数组里的所有 IP 也告诉用户，并明确指引"到 mp.weixin.qq.com → 设置与开发 → 基本配置 → IP 白名单 加入"。漏掉 IP 白名单会让发布时被微信以 invalid IP 拒绝，所以**不能省**。`instruction` 字段已经把这两件事写在一起了，照念即可 |
-| 我现在是谁 / 看看账号 / 余额 | `scripts/run.js whoami` | 报告账号、apiKey 脱敏摘要、微信配置状态 |
+| 我现在是谁 / 看看账号 / 余额 / 我是哪一档 | `scripts/run.js whoami` | 报告账号、apiKey 脱敏摘要、微信配置、`plan.{role,label,rewriteEngine}`（用户等级 + 当前 rewrite 引擎；专业版及以上走 `creator` 原创合成，其它走 `rewriter` 伪改写） |
 | 公众号配好了吗 | `scripts/run.js wechat status` | 报告 `configured` 与当前 AppID |
 | 退出登录 / 注销 | `scripts/run.js logout` | 报告"已清除本地凭证" |
 | 配置页眉页脚 / 关注引导 / 文末二维码 | `scripts/run.js wrapper config` | 专业版及以上可用；读取 stdout JSON `url` 字段，把完整 URL **原文粘贴**给用户（同 wechat config 规则，不包装 Markdown 链接）；AI **不要替用户编 Markdown 内容** |
@@ -313,8 +313,8 @@ scripts/run.js help
 | 选项 | 默认 | 说明 |
 |---|---|---|
 | `--theme <id>` | `blackink` | 主题 ID（见下表） |
-| `--rewrite` | 关闭 | 启用 AI 分段改写 |
-| `--style <name>` | `casual` | 配合 `--rewrite`：`casual` / `formal` / `technical` / `creative` |
+| `--rewrite` | 关闭 | 启用 AI 改写 / 创作。**按用户等级自动路由引擎**：免费版 / 入门版走 `markdown-ai-rewriter`（minimax 分段伪改写，保结构）；专业版及以上、或 `isAdmin=true` 走 `markdown-ai-creator`（deepseek 原创合成，更贴近"自己写一篇"，会带上 source URL 溯源）。具体当前账号走哪个引擎可以用 `whoami` 看 `plan.rewriteEngine` |
+| `--style <name>` | `casual` | 配合 `--rewrite`：`casual` / `formal` / `technical` / `creative`。两种引擎都接受同一组 style，但 creator 引擎里 style 是"语气 hint"而不是硬约束 |
 | `--prompt "<text>"` | — | 自定义改写提示，覆盖 `--style` |
 
 ### convert 选项
@@ -390,7 +390,8 @@ draft / publish:                    convert:
          │                                       │
          ├─ news-to-markdown  (URL 路径)         └─ markitdown subprocess
          ├─ markitdown        (文件 / 文档型 URL)        │
-         ├─ markdown-ai-rewriter   (可选，--rewrite)     ▼
+         ├─ markdown-ai-rewriter / markdown-ai-creator    ▼
+         │  (可选，--rewrite；按用户等级路由：免费/入门→rewriter，专业版+→creator)
          ├─ user-wrapper           (可选)         返回 markdown / jobId
          └─ wechat-md-publisher    上传图片 → 草稿/发布
                 ▼

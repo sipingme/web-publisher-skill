@@ -879,6 +879,20 @@ async function runWhoami() {
     console.error(JSON.stringify({ success: false, error: data?.error || `HTTP ${res.status}` }));
     process.exit(1);
   }
+
+  // plan 字段是 Phase 0 之后服务端透传的：{ role, label, isAdmin, rewriteEngine }。
+  // 老版本服务端可能没这字段，做防御式 fallback。`rewriteEngine` 直接告诉用户/AI
+  // 当前等级走的是 markdown-ai-creator（创作合成）还是 markdown-ai-rewriter（伪改写）。
+  const plan = data.plan && typeof data.plan === 'object' ? data.plan : null;
+  if (plan) {
+    const labelText = plan.label || plan.role || '未知';
+    // isAdmin 是独立 flag，可叠加在任意 role 上（用于测试 / 让某个普通用户解锁 creator
+    // 引擎）。只在 role !== 'admin' 时再追加 (管理员) 后缀，避免「管理员 (管理员)」。
+    const adminMark = plan.isAdmin && plan.role !== 'admin' ? ' (管理员)' : '';
+    const engine = plan.rewriteEngine || 'rewriter';
+    process.stderr.write(`当前等级: ${labelText}${adminMark} · rewrite 引擎: ${engine}\n`);
+  }
+
   console.log(JSON.stringify({
     success: true,
     source: creds.source,
@@ -886,6 +900,7 @@ async function runWhoami() {
     name: data.name,
     phone: data.phone,
     apiKey: data.apiKey,
+    plan,
     wechat: data.wechat,
     credits: data.credits
   }, null, 2));
