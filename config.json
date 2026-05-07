@@ -1,6 +1,6 @@
 {
   "name": "web-publisher",
-  "version": "0.9.4",
+  "version": "0.9.7",
   "requiredEnvVars": [],
   "requires": {
     "runtime": {
@@ -11,7 +11,7 @@
   },
   "skill": {
     "name": "web-publisher",
-    "version": "0.9.4",
+    "version": "0.9.7",
     "enabled": true,
     "autoInvoke": false
   },
@@ -69,12 +69,12 @@
     "publish": {
       "script": "./scripts/run.js",
       "args": ["publish"],
-      "description": "将网页文章 / 本地文档（PDF/DOCX/PPTX/...）发布到平台。<input> 是 URL 或本地文件路径"
+      "description": "将网页文章 / 本地文档（PDF/DOCX/PPTX/...）发布到平台。<input> 是 URL 或本地文件路径。可选：--rewrite + --style/--prompt 走 AI 改写；creator 引擎 (pro+) 还支持 --cover / --cover-style / --regenerate-images / --no-image-classify / --enable-ocr，以及 0.9.7+ 新增的 --lock-title (锁死标题) 和 --append-source-footer auto|always|never (文末原文链接策略)。返回里 0.9.7+ 自动透出 cost / warnings / imageStabilize / imageClassify"
     },
     "draft": {
       "script": "./scripts/run.js",
       "args": ["draft"],
-      "description": "将网页文章 / 本地文档（PDF/DOCX/PPTX/...）保存为草稿。<input> 是 URL 或本地文件路径"
+      "description": "将网页文章 / 本地文档（PDF/DOCX/PPTX/...）保存为草稿。<input> 是 URL 或本地文件路径。可选：--rewrite + --style/--prompt 走 AI 改写；creator 引擎 (pro+) 还支持 --cover / --cover-style / --regenerate-images / --no-image-classify / --enable-ocr，以及 0.9.7+ 新增的 --lock-title 和 --append-source-footer auto|always|never。返回里 0.9.7+ 自动透出 cost / warnings / imageStabilize / imageClassify"
     },
     "convert": {
       "script": "./scripts/run.js",
