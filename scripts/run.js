@@ -226,6 +226,20 @@ function parsePublishArgs(argList) {
       opts.style = argList[++i];
     } else if (argList[i] === '--prompt' && argList[i + 1]) {
       opts.prompt = argList[++i];
+    } else if (argList[i] === '--cover') {
+      // 生成封面图（消耗 minimax image-01 配额，~0.05 元/张）
+      opts.imageCover = true;
+    } else if (argList[i] === '--cover-style' && argList[i + 1]) {
+      opts.imageCoverStyle = argList[++i];
+    } else if (argList[i] === '--regenerate-images') {
+      // 把判定为带水印 / 文字截图的正文图换成 t2i 重生成版本
+      opts.imageRegenerate = true;
+    } else if (argList[i] === '--no-image-classify') {
+      // 关闭启发式图片分类（默认开 —— 不可达 / icon 自动 caption-only 兜底）
+      opts.imageClassify = false;
+    } else if (argList[i] === '--enable-ocr') {
+      // 启用 OCR（要求 server 端装了 tesseract.js；首次模型加载较慢）
+      opts.imageEnableOcr = true;
     } else if (!argList[i].startsWith('--')) {
       // First positional is the input (URL or file path); preserve original
       // string here so classifyInput() can decide how to dispatch.
@@ -233,6 +247,27 @@ function parsePublishArgs(argList) {
     }
   }
   return opts;
+}
+
+/**
+ * 根据 parsePublishArgs 解析出来的 opts 生成 image options 字段。
+ * 三种 image 旗标都没传时返回 null —— 让 server 走默认（classify on, others off）。
+ */
+function deriveImageOpts(opts) {
+  const has =
+    opts.imageCover === true ||
+    opts.imageRegenerate === true ||
+    opts.imageClassify === false ||
+    opts.imageEnableOcr === true ||
+    typeof opts.imageCoverStyle === 'string';
+  if (!has) return null;
+  const out = {};
+  if (opts.imageClassify === false) out.classify = false;
+  if (opts.imageRegenerate === true) out.regenerate = true;
+  if (opts.imageCover === true) out.cover = true;
+  if (typeof opts.imageCoverStyle === 'string') out.coverStyle = opts.imageCoverStyle;
+  if (opts.imageEnableOcr === true) out.enableOcr = true;
+  return out;
 }
 
 async function runPublish(action, args) {
@@ -259,6 +294,8 @@ async function runPublish(action, args) {
   let response;
   let label;
   try {
+    const imageOpts = deriveImageOpts(opts);
+
     if (classified.kind === 'file') {
       // Multipart upload: PDF/DOCX/PPTX go straight into pipeline (markitdown
       // → optional rewrite → wrapper → wechat publish). No abuse risk:
@@ -269,6 +306,15 @@ async function runPublish(action, args) {
         fields.rewrite = '1';
         if (opts.style) fields.rewriteStyle = opts.style;
         if (opts.prompt) fields.rewritePrompt = opts.prompt;
+        if (imageOpts) {
+          // multipart 字段都是字符串 —— server 端有专用 parser 把这些
+          // boolean 字段转回来（parseImageOptionsFromFields）。
+          if (imageOpts.classify === false) fields.rewriteImageClassify = '0';
+          if (imageOpts.regenerate === true) fields.rewriteImageRegenerate = '1';
+          if (imageOpts.cover === true) fields.rewriteImageCover = '1';
+          if (typeof imageOpts.coverStyle === 'string') fields.rewriteCoverStyle = imageOpts.coverStyle;
+          if (imageOpts.enableOcr === true) fields.rewriteEnableOcr = '1';
+        }
       }
       process.stderr.write(`[server] 上传文件并提交发布任务: ${classified.filename} (${classified.sizeBytes} bytes)\n`);
       const buffer = readClassifiedFileBuffer(classified);
@@ -289,6 +335,7 @@ async function runPublish(action, args) {
         body.rewriteOptions = {};
         if (opts.style) body.rewriteOptions.style = opts.style;
         if (opts.prompt) body.rewriteOptions.prompt = opts.prompt;
+        if (imageOpts) body.rewriteOptions.image = imageOpts;
       }
       process.stderr.write(`[server] 提交抓取任务: ${classified.url}\n`);
       response = await pipelineRequest('POST', '/pipeline', body, creds);
@@ -1066,6 +1113,13 @@ web-publisher v${PKG_VERSION} — 将网页文章 / 本地文档发布到微信�
   --rewrite          启用 AI 改写
   --style <style>    改写风格: casual / formal / technical / creative
   --prompt <text>    自定义改写提示
+
+图片处理选项（仅 creator 引擎生效，需 pro/ultra/admin 等级；要求 --rewrite 同时开启）:
+  --cover                    生成封面图（消耗 minimax image-01 配额，~ 0.05 元/张）
+  --cover-style <text>       封面图风格 hint，例如 "赛博朋克 霓虹"
+  --regenerate-images        把疑似带水印 / 文字截图 的正文图换成 t2i 重生成
+  --no-image-classify        关闭启发式分类（默认开 —— 不可达 / icon 自动 caption-only）
+  --enable-ocr               启用 OCR 增强水印识别（首次模型加载较慢，~30s）
 
 计费（与 /pipeline 一致）:
   draft / publish / convert 各 1 credit；失败不扣；不发用户通知

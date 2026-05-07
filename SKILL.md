@@ -1,6 +1,6 @@
 ---
 name: web-publisher
-version: 0.9.5
+version: 0.9.6
 description: 输入文章 URL **或本地文档（PDF/DOCX/PPTX/XLSX/EPUB/图片/音频/...）**，自动提取正文、可选 AI 改写、并发布到微信公众号；也可只把任意文档转成 Markdown 文本（不发布）。抓取 / 转换 / 改写 / 发布都在服务端 (tools.siping.me) 完成，CLI 不装任何 npm 依赖；登录、公众号配置全部通过对话 + 一次性浏览器跳转完成。⚠️ 服务端走云端固定 IP，**对小红书、部分知乎专栏、登录墙文章、海外站点经常被反爬挡掉**——此时由 AI Agent（Hermes / Cursor / OpenClaw 等）改调用**用户本地安装的 `news-to-markdown-skill`** 把 URL 抓成 Markdown，然后人工复核 / 归档。也可配合 `browser-web-search` 先搜索拿到 URL 再批量发布。
 author: Ping Si <sipingme@gmail.com>
 tags: [publish, wechat, article, content, onboarding, pdf, docx, markitdown]
@@ -316,6 +316,11 @@ scripts/run.js help
 | `--rewrite` | 关闭 | 启用 AI 改写 / 创作。**按用户等级自动路由引擎**：免费版 / 入门版走 `markdown-ai-rewriter`（minimax 分段伪改写，保结构）；专业版及以上、或 `isAdmin=true` 走 `markdown-ai-creator`（deepseek 原创合成，更贴近"自己写一篇"，会带上 source URL 溯源）。具体当前账号走哪个引擎可以用 `whoami` 看 `plan.rewriteEngine` |
 | `--style <name>` | `casual` | 配合 `--rewrite`：`casual` / `formal` / `technical` / `creative`。两种引擎都接受同一组 style，但 creator 引擎里 style 是"语气 hint"而不是硬约束 |
 | `--prompt "<text>"` | — | 自定义改写提示，覆盖 `--style` |
+| `--cover` | 关闭 | **仅 creator 引擎**：额外生成一张封面图（minimax `image-01`，~ 0.05 元/张），返回字段 `coverImageUrl`。注意 minimax URL **24h 过期**，不要直接长期保存 |
+| `--cover-style "<text>"` | — | 配合 `--cover`：封面风格 hint，例如 `"赛博朋克 霓虹 高对比"`；不传走"现代简洁公众号头图"默认 |
+| `--regenerate-images` | 关闭 | **仅 creator 引擎**：把分类判定为带水印 / 文字截图 的正文图换成 t2i 重生成版本。每张图同样消耗 minimax image-01 配额。失败自动退化为 `*图：alt*` 注脚 |
+| `--no-image-classify` | — | 关闭启发式图片分类（默认开）。开启时：404 / 反爬挡 / 头条等带水印图床 / 过小 icon / 极端比例 banner 都会自动替换为 `*图：alt*` 注脚，不影响 LLM 写作 |
+| `--enable-ocr` | 关闭 | 在分类时启用 OCR 增强水印识别（要求服务器装了 `tesseract.js`，目前 optionalDependencies 默认装了；首次模型加载较慢，~30s）。命中"水印"/"出处"/"今日头条"等关键词、或截图里文字过多会被判 `caption-only` |
 
 ### convert 选项
 
@@ -390,9 +395,13 @@ draft / publish:                    convert:
          │                                       │
          ├─ news-to-markdown  (URL 路径)         └─ markitdown subprocess
          ├─ markitdown        (文件 / 文档型 URL)        │
+         ├─ image-classifier  (creator 路径独有)         │
+         │  └─ HTTP 探测尺寸 + URL 启发式 + 可选 OCR
+         │     输出 perImage strategy: preserve / caption-only / regenerate
          ├─ markdown-ai-rewriter / markdown-ai-creator    ▼
          │  (可选，--rewrite；按用户等级路由：免费/入门→rewriter，专业版+→creator)
-         ├─ user-wrapper           (可选)         返回 markdown / jobId
+         │  creator 0.2.0+ 还支持 --cover (生成封面图) / --regenerate-images (t2i 替图)
+         ├─ user-wrapper           (可选)         返回 markdown / jobId / coverImageUrl
          └─ wechat-md-publisher    上传图片 → 草稿/发布
                 ▼
          返回 jobId，CLI 轮询 GET /jobs/<jobId> 至 completed / failed
