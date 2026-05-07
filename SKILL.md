@@ -1,6 +1,6 @@
 ---
 name: web-publisher
-version: 0.9.6
+version: 0.9.7
 description: 输入文章 URL **或本地文档（PDF/DOCX/PPTX/XLSX/EPUB/图片/音频/...）**，自动提取正文、可选 AI 改写、并发布到微信公众号；也可只把任意文档转成 Markdown 文本（不发布）。抓取 / 转换 / 改写 / 发布都在服务端 (tools.siping.me) 完成，CLI 不装任何 npm 依赖；登录、公众号配置全部通过对话 + 一次性浏览器跳转完成。⚠️ 服务端走云端固定 IP，**对小红书、部分知乎专栏、登录墙文章、海外站点经常被反爬挡掉**——此时由 AI Agent（Hermes / Cursor / OpenClaw 等）改调用**用户本地安装的 `news-to-markdown-skill`** 把 URL 抓成 Markdown，然后人工复核 / 归档。也可配合 `browser-web-search` 先搜索拿到 URL 再批量发布。
 author: Ping Si <sipingme@gmail.com>
 tags: [publish, wechat, article, content, onboarding, pdf, docx, markitdown]
@@ -316,11 +316,42 @@ scripts/run.js help
 | `--rewrite` | 关闭 | 启用 AI 改写 / 创作。**按用户等级自动路由引擎**：免费版 / 入门版走 `markdown-ai-rewriter`（minimax 分段伪改写，保结构）；专业版及以上、或 `isAdmin=true` 走 `markdown-ai-creator`（deepseek 原创合成，更贴近"自己写一篇"，会带上 source URL 溯源）。具体当前账号走哪个引擎可以用 `whoami` 看 `plan.rewriteEngine` |
 | `--style <name>` | `casual` | 配合 `--rewrite`：`casual` / `formal` / `technical` / `creative`。两种引擎都接受同一组 style，但 creator 引擎里 style 是"语气 hint"而不是硬约束 |
 | `--prompt "<text>"` | — | 自定义改写提示，覆盖 `--style` |
-| `--cover` | 关闭 | **仅 creator 引擎**：额外生成一张封面图（minimax `image-01`，~ 0.05 元/张），返回字段 `coverImageUrl`。注意 minimax URL **24h 过期**，不要直接长期保存 |
+| `--cover` | 关闭 | **仅 creator 引擎**：额外生成一张封面图（minimax `image-01`，~ 0.05 元/张），返回字段 `coverImageUrl`。**v0.9.7+ 起 server 自动把 minimax 临时 URL 下载到本地图床**——24h 过期问题解决，调用方拿到的 cover 路径已经是 wechat-md-publisher 能上永久素材的 stable 路径 |
 | `--cover-style "<text>"` | — | 配合 `--cover`：封面风格 hint，例如 `"赛博朋克 霓虹 高对比"`；不传走"现代简洁公众号头图"默认 |
-| `--regenerate-images` | 关闭 | **仅 creator 引擎**：把分类判定为带水印 / 文字截图 的正文图换成 t2i 重生成版本。每张图同样消耗 minimax image-01 配额。失败自动退化为 `*图：alt*` 注脚 |
+| `--regenerate-images` | 关闭 | **仅 creator 引擎**：把分类判定为带水印 / 文字截图 的正文图换成 t2i 重生成版本。每张图同样消耗 minimax image-01 配额。**v0.9.7+ 起同样会本地化转存**。失败自动退化为 `*图：alt*` 注脚 |
 | `--no-image-classify` | — | 关闭启发式图片分类（默认开）。开启时：404 / 反爬挡 / 头条等带水印图床 / 过小 icon / 极端比例 banner 都会自动替换为 `*图：alt*` 注脚，不影响 LLM 写作 |
-| `--enable-ocr` | 关闭 | 在分类时启用 OCR 增强水印识别（要求服务器装了 `tesseract.js`，目前 optionalDependencies 默认装了；首次模型加载较慢，~30s）。命中"水印"/"出处"/"今日头条"等关键词、或截图里文字过多会被判 `caption-only` |
+| `--enable-ocr` | 关闭 | 在分类时启用 OCR 增强水印识别（要求服务器装了 `tesseract.js`，目前 optionalDependencies 默认装了；首次模型加载较慢，~30s——server 端 `ENABLE_OCR_WARMUP=true` 时启动期预热可消除）。命中"水印"/"出处"/"今日头条"等关键词、或截图里文字过多会被判 `caption-only` |
+| `--lock-title` | 关闭 | **v0.9.7+，仅 creator 引擎**：锁死最终标题。LLM 即使想加副标题 / 改成问句 / 加 emoji，也会被服务端强制改回原 title。适用于热搜稿、SEO 命题作文。要求输入有 title（URL 抓取 / 文档转换会自动提取）。如果输入没 title，server 会忽略此 flag |
+| `--append-source-footer auto\|always\|never` | `auto` | **v0.9.7+，仅 creator 引擎**：控制文末"原文：[…](url)" 链接列表追加策略。`auto` = LLM 一份 source 都没引用时才追加（兜底防漏）；`always` = 每次都追加（合规审计）；`never` = 完全关掉（翻译 / 二创场景 footer 太显眼） |
+
+### 改写返回里的诊断字段（v0.9.7+）
+
+`draft` / `publish` 完成后 stdout JSON 会自动包含来自 server `jobs.metadata.dispatch` 的诊断信息（仅 creator 引擎产生）：
+
+```json
+{
+  "success": true,
+  "title": "...",
+  "warnings": [
+    "lockTitle: H1 mismatch was rewritten to \"我的标题\"",
+    "source[0] (https://example.com/long): truncated from 25430 to 12000 chars"
+  ],
+  "cost": {
+    "tokens": { "total": 4521 },
+    "imagesGenerated": 1,
+    "estimatedRMB": 0.149,
+    "trace": [{ "provider": "minimax", "ok": true }]
+  },
+  "imageStabilize": { "downloaded": 1, "failed": 0, "skipped": 3 },
+  "imageClassify": { "safe": 2, "has-watermark": 1, "too-small": 1 }
+}
+```
+
+- `warnings`：creator 包级告警（标题改写、source 截断、image-stabilize 失败、imageStrategy 失败）；任一不为空时 AI 应转告用户
+- `cost.estimatedRMB`：本次预估花费（粗略，仅 LLM tokens + t2i 图片单价；网络/server 成本不计）。**仅作量级提示，不是账单**——真实账单以 minimax / openai 后台为准
+- `cost.trace`：哪些 provider 被尝试了（5xx/429 时会切到下一个）。`ok=false` 表示 fallback 命中，应该提醒运维
+- `imageStabilize`：临时图床转存结果。`failed > 0` 时图依然能发出去（保留原 URL），但 24h 后会过期
+- `imageClassify`：启发式分类摘要
 
 ### convert 选项
 
@@ -400,7 +431,11 @@ draft / publish:                    convert:
          │     输出 perImage strategy: preserve / caption-only / regenerate
          ├─ markdown-ai-rewriter / markdown-ai-creator    ▼
          │  (可选，--rewrite；按用户等级路由：免费/入门→rewriter，专业版+→creator)
-         │  creator 0.2.0+ 还支持 --cover (生成封面图) / --regenerate-images (t2i 替图)
+         │  creator 0.2.0+ 支持 --cover (生成封面图) / --regenerate-images (t2i 替图)
+         │  creator 0.3.0+ 支持 --lock-title (锁死标题) / --append-source-footer
+         │  api 0.2.1+：dispatcher provider 失败自动 fallover (5xx/429)，cost
+         │             落到 jobs.metadata.dispatch.cost；t2i 临时 URL 自动转存
+         │             到 outputDir/images（image-stabilizer），24h 过期问题解决
          ├─ user-wrapper           (可选)         返回 markdown / jobId / coverImageUrl
          └─ wechat-md-publisher    上传图片 → 草稿/发布
                 ▼
