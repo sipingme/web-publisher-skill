@@ -1,6 +1,6 @@
 {
   "name": "web-publisher",
-  "version": "0.9.7",
+  "version": "0.9.8",
   "requiredEnvVars": [],
   "requires": {
     "runtime": {
@@ -11,7 +11,7 @@
   },
   "skill": {
     "name": "web-publisher",
-    "version": "0.9.7",
+    "version": "0.9.8",
     "enabled": true,
     "autoInvoke": false
   },
@@ -69,12 +69,12 @@
     "publish": {
       "script": "./scripts/run.js",
       "args": ["publish"],
-      "description": "将网页文章 / 本地文档（PDF/DOCX/PPTX/...）发布到平台。<input> 是 URL 或本地文件路径。可选：--rewrite + --style/--prompt 走 AI 改写；creator 引擎 (pro+) 还支持 --cover / --cover-style / --regenerate-images / --no-image-classify / --enable-ocr，以及 0.9.7+ 新增的 --lock-title (锁死标题) 和 --append-source-footer auto|always|never (文末原文链接策略)。返回里 0.9.7+ 自动透出 cost / warnings / imageStabilize / imageClassify"
+      "description": "将网页文章 / 本地文档（PDF/DOCX/PPTX/...）发布到平台。<input> 是 URL 或本地文件路径。可选：--rewrite + --style/--prompt 走 AI 改写；creator 引擎 (pro+) 还支持 --cover / --cover-style / --regenerate-images / --no-image-classify / --enable-ocr，以及 0.9.7+ 新增的 --lock-title (锁死标题) 和 --append-source-footer auto|always|never (文末原文链接策略)。返回里 0.9.7+ 自动透出 cost / warnings / imageStabilize / imageClassify。0.9.8+：加 --detach 立刻返回 jobId 不阻塞 poll，配合 `wait` 命令做并发发布。完成时 stderr 会先打一行 [DONE] 摘要再输出 stdout JSON。"
     },
     "draft": {
       "script": "./scripts/run.js",
       "args": ["draft"],
-      "description": "将网页文章 / 本地文档（PDF/DOCX/PPTX/...）保存为草稿。<input> 是 URL 或本地文件路径。可选：--rewrite + --style/--prompt 走 AI 改写；creator 引擎 (pro+) 还支持 --cover / --cover-style / --regenerate-images / --no-image-classify / --enable-ocr，以及 0.9.7+ 新增的 --lock-title 和 --append-source-footer auto|always|never。返回里 0.9.7+ 自动透出 cost / warnings / imageStabilize / imageClassify"
+      "description": "将网页文章 / 本地文档（PDF/DOCX/PPTX/...）保存为草稿。<input> 是 URL 或本地文件路径。可选：--rewrite + --style/--prompt 走 AI 改写；creator 引擎 (pro+) 还支持 --cover / --cover-style / --regenerate-images / --no-image-classify / --enable-ocr，以及 0.9.7+ 新增的 --lock-title 和 --append-source-footer auto|always|never。返回里 0.9.7+ 自动透出 cost / warnings / imageStabilize / imageClassify。0.9.8+：加 --detach 立刻返回 jobId 不阻塞 poll，配合 `wait` 命令做并发发布。完成时 stderr 会先打一行 [DONE] 摘要再输出 stdout JSON。"
     },
     "convert": {
       "script": "./scripts/run.js",
@@ -84,7 +84,17 @@
     "status": {
       "script": "./scripts/run.js",
       "args": ["status"],
-      "description": "查询任务状态"
+      "description": "查询单个 job 状态。0.9.8+ 默认输出一行紧凑摘要：jobId  《title》  action/theme  status·step  duration；加 --json 输出原始 JSON。失败时还会跟一行 error。"
+    },
+    "jobs": {
+      "script": "./scripts/run.js",
+      "args": ["jobs"],
+      "description": "(0.9.8+) 列出最近 jobs，每行紧凑摘要。可选: --status pending|processing|completed|failed --type pipeline|convert --limit <n> --json。短时间发多篇时一眼能区分谁是谁。"
+    },
+    "wait": {
+      "script": "./scripts/run.js",
+      "args": ["wait"],
+      "description": "(0.9.8+) 阻塞等待一个或多个 jobId 完成（消费 SSE 流）。每个 job 进终态时立刻 stderr 打 [DONE]/[FAIL] 摘要；全部 completed 退出码 0，任一 failed 退出码 1。配合 publish/draft --detach 做并发发布的标准等待方式。"
     },
     "help": {
       "script": "./scripts/run.js",
